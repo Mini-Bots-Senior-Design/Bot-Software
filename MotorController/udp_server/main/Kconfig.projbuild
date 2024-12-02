@@ -1,0 +1,28 @@
+menu "Example Configuration"
+
+    config EXAMPLE_IPV4
+        bool "IPV4"
+        default y
+
+    config EXAMPLE_IPV6
+        bool "IPV6"
+        default n
+        select EXAMPLE_CONNECT_IPV6
+
+    config EXAMPLE_PORT
+        int "Port"
+        range 0 65535
+        default 3333
+        help
+            Local port the example server will listen on.
+    config EXAMPLE_SERVER_IP
+        string "Server IP"
+        default "10.0.0.1"
+    config EXAMPLE_SERVER_PORT
+        int "Server Port"
+        range 0 65535
+        default 3333
+        help
+            Local port the example server will listen on.
+
+endmenu
