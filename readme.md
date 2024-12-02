@@ -2,12 +2,27 @@
 
 ## Components
 
-### LoRaDevice
-Reads from I2C ports and writes the values to the uart port
+#### 1. LoRaDevice
+**Inputs**:
+- N/A
 
-### MotorController
-Reads from the UART Port, moves the motor, and sends the messages via UDP
+**Actions**:
+- Read from the GPS (i2c)
+- Read from the IMU (i2c)
 
+**Outputs**:
+- Print to UART
+  
+#### 2. MotorController
+**Inputs**:
+- Read from UART Port
+- Listen to UDP Messages
+
+**Internals**:
+- Move the Motors
+
+**Outputs**:
+- Publish data to Uart
 
 ## Example Code
 ```
