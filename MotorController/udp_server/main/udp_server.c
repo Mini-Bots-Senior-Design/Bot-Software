@@ -45,13 +45,6 @@ static const char *TAG = "example";
 #define DEMO_MODE 1
 #define TESTING_MODE 0
 
-// I2C Defs
-#define I2C_SLAVE_NUM I2C_NUM_0
-#define I2C_SLAVE_ADDR 0x08
-#define I2C_SLAVE_SDA_IO 21
-#define I2C_SLAVE_SCL_IO 22
-#define I2C_SLAVE_RX_BUF_LEN 256
-#define I2C_SLAVE_CLK_SPEED 100000
 
 // UART Defs
 #define UART_PORT UART_NUM_2      // Using UART1 for this example
@@ -63,39 +56,11 @@ static const char *TAG = "example";
 int leftPWM = 1500;
 int rightPWM = 1500;
 
+int factor = 5;
+
 int buoyID = 1; // HARDCODED FOR NOW, BUT WILL BE SENT FROM SBC ON INITIAL CONNECTION
-int esc_status = 0;
 
 float GyroX, GyroY, GyroZ, AccelX, AccelY, AccelZ, MagX, MagY, MagZ, LatCurr, LonCurr, LatTarget, LonTarget;
-
-static esp_err_t i2c_slave_init(void)
-{
-    i2c_config_t conf_slave = {
-        .mode = I2C_MODE_SLAVE,
-        .sda_io_num = I2C_SLAVE_SDA_IO,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_io_num = I2C_SLAVE_SCL_IO,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .slave = {
-            .addr_10bit_en = 0,
-            .slave_addr = I2C_SLAVE_ADDR,
-        },
-
-    };
-
-    esp_err_t err = i2c_param_config(I2C_SLAVE_NUM, &conf_slave);
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    err = i2c_driver_install(I2C_SLAVE_NUM, conf_slave.mode, I2C_SLAVE_RX_BUF_LEN, 0, 0);
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    printf("I2C initialized as slave with address 0x%02X\n", I2C_SLAVE_ADDR);
-    return ESP_OK;  // Ensure the function returns ESP_OK when successful
-}
 
 static void uart_init() {
     vTaskDelay(pdMS_TO_TICKS(10000));
@@ -121,98 +86,81 @@ static void uart_init() {
 }
 
 
-static void esc_init(mcpwm_timer_handle_t *timer, mcpwm_oper_handle_t *oper, mcpwm_cmpr_handle_t *comparator, mcpwm_gen_handle_t *generator, int gpio_num) {
-    ESP_LOGI(TAG, "Create timer and operator");
-    mcpwm_timer_config_t timer_config = {
-        .group_id = 0,
-        .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT,
-        .resolution_hz = ESC_TIMEBASE_RESOLUTION_HZ,
-        .period_ticks = ESC_TIMEBASE_PERIOD,
-        .count_mode = MCPWM_TIMER_COUNT_MODE_UP,
+// static void esc_init(mcpwm_timer_handle_t *timer, mcpwm_oper_handle_t *oper, mcpwm_cmpr_handle_t *comparator, mcpwm_gen_handle_t *generator, int gpio_num) {
+//     ESP_LOGI(TAG, "Create timer and operator");
+//     mcpwm_timer_config_t timer_config = {
+//         .group_id = 0,
+//         .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT,
+//         .resolution_hz = ESC_TIMEBASE_RESOLUTION_HZ,
+//         .period_ticks = ESC_TIMEBASE_PERIOD,
+//         .count_mode = MCPWM_TIMER_COUNT_MODE_UP,
+//     };
+//     ESP_ERROR_CHECK(mcpwm_new_timer(&timer_config, &timer));
+
+//     mcpwm_operator_config_t operator_config = {
+//         .group_id = 0, // operator must be in the same group to the timer
+//     };
+//     ESP_ERROR_CHECK(mcpwm_new_operator(&operator_config, &oper));
+
+//     ESP_LOGI(TAG, "Connect timer and operator");
+//     ESP_ERROR_CHECK(mcpwm_operator_connect_timer(oper, timer));
+
+//     ESP_LOGI(TAG, "Create comparator and generator from the operator");
+//     mcpwm_comparator_config_t comparator_config = {
+//         .flags.update_cmp_on_tez = true,
+//     };
+//     ESP_ERROR_CHECK(mcpwm_new_comparator(oper, &comparator_config, &comparator));
+
+//     mcpwm_generator_config_t generator_config = {
+//         .gen_gpio_num = gpio_num,
+//     };
+//     ESP_ERROR_CHECK(mcpwm_new_generator(oper, &generator_config, &generator));
+
+//     // set the initial compare value, so that the servo will spin to the center position
+//     // ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, ESC_MIN_PULSEWIDTH_US));
+
+//     ESP_LOGI(TAG, "Set generator action on timer and compare event");
+//     // go high on counter empty
+//     ESP_ERROR_CHECK(mcpwm_generator_set_action_on_timer_event(generator,
+//                                                               MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, MCPWM_TIMER_EVENT_EMPTY, MCPWM_GEN_ACTION_HIGH)));
+//     // go low on compare threshold
+//     ESP_ERROR_CHECK(mcpwm_generator_set_action_on_compare_event(generator,
+//                                                                 MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, comparator, MCPWM_GEN_ACTION_LOW)));
+
+//     ESP_LOGI(TAG, "Enable and start timer");
+//     ESP_ERROR_CHECK(mcpwm_timer_enable(timer));
+//     ESP_ERROR_CHECK(mcpwm_timer_start_stop(timer, MCPWM_TIMER_START_NO_STOP));
+
+//     printf("Start at half speed\n");
+//     ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, 1500));
+//     vTaskDelay(10000 / portTICK_PERIOD_MS);
+
+// }
+
+int mock_uart_read_bytes(int uart_num, uint8_t* data, size_t length, int ticks_to_wait) {
+    // Simulate 11 floats of data (44 bytes total)
+    if (length != 44) return -1;
+
+    float mockSensorData[11] = {
+        1.1f, -2.2f, 3.3f,   // Accelerometer X, Y, Z
+        4.4f, -5.5f, 6.6f,   // Gyroscope X, Y, Z
+        7.7f, -8.8f, 9.9f,   // Magnetometer X, Y, Z
+        37.7749f, -122.4194f // GPS Lat, Lon
     };
-    ESP_ERROR_CHECK(mcpwm_new_timer(&timer_config, &timer));
 
-    mcpwm_operator_config_t operator_config = {
-        .group_id = 0, // operator must be in the same group to the timer
-    };
-    ESP_ERROR_CHECK(mcpwm_new_operator(&operator_config, &oper));
-
-    ESP_LOGI(TAG, "Connect timer and operator");
-    ESP_ERROR_CHECK(mcpwm_operator_connect_timer(oper, timer));
-
-    ESP_LOGI(TAG, "Create comparator and generator from the operator");
-    mcpwm_comparator_config_t comparator_config = {
-        .flags.update_cmp_on_tez = true,
-    };
-    ESP_ERROR_CHECK(mcpwm_new_comparator(oper, &comparator_config, &comparator));
-
-    mcpwm_generator_config_t generator_config = {
-        .gen_gpio_num = gpio_num,
-    };
-    ESP_ERROR_CHECK(mcpwm_new_generator(oper, &generator_config, &generator));
-
-    // set the initial compare value, so that the servo will spin to the center position
-    // ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, ESC_MIN_PULSEWIDTH_US));
-
-    ESP_LOGI(TAG, "Set generator action on timer and compare event");
-    // go high on counter empty
-    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_timer_event(generator,
-                                                              MCPWM_GEN_TIMER_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, MCPWM_TIMER_EVENT_EMPTY, MCPWM_GEN_ACTION_HIGH)));
-    // go low on compare threshold
-    ESP_ERROR_CHECK(mcpwm_generator_set_action_on_compare_event(generator,
-                                                                MCPWM_GEN_COMPARE_EVENT_ACTION(MCPWM_TIMER_DIRECTION_UP, comparator, MCPWM_GEN_ACTION_LOW)));
-
-    ESP_LOGI(TAG, "Enable and start timer");
-    ESP_ERROR_CHECK(mcpwm_timer_enable(timer));
-    ESP_ERROR_CHECK(mcpwm_timer_start_stop(timer, MCPWM_TIMER_START_NO_STOP));
-
-    printf("Start at half speed\n");
-    ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, 1500));
-    vTaskDelay(10000 / portTICK_PERIOD_MS);
-
-    esc_status = 1; // esc is ready
+    memcpy(data, mockSensorData, length);
+    return length;
 }
 
-static void i2c_read_buf_task() {
-    uint8_t data[44];  // Buffer to hold 11 floats (4 bytes each)
-    while (1) {
-        int length = i2c_slave_read_buffer(I2C_SLAVE_NUM, data, sizeof(data), pdMS_TO_TICKS(1000));
-        if (length == sizeof(data)) {  // Check if full data is received
 
-            float* sensorData = (float*)data;
-
-            AccelX = sensorData[0];
-            AccelY = sensorData[1];
-            AccelZ = sensorData[2];
-            GyroX = sensorData[3];
-            GyroY = sensorData[4];
-            GyroZ = sensorData[5];
-            MagX = sensorData[6];
-            MagY = sensorData[7];
-            MagZ = sensorData[8];
-            LatCurr = sensorData[9];
-            LonCurr = sensorData[10];
-
-
-            // Print the interpreted data
-            // printf("Received Data:\n");
-            // printf("Accelerometer (m/s^2) - X: %.2f, Y: %.2f, Z: %.2f\n", sensorData[0], sensorData[1], sensorData[2]);
-            // printf("Gyroscope (rad/s) - X: %.2f, Y: %.2f, Z: %.2f\n", sensorData[3], sensorData[4], sensorData[5]);
-            // printf("Magnetometer (uT) - X: %.2f, Y: %.2f, Z: %.2f\n", sensorData[6], sensorData[7], sensorData[8]);
-            // printf("GPS - Lat: %f, Lon: %f\n", sensorData[9], sensorData[10]);
-            // printf("--- End of Sensor Data Cycle ---\n");
-        } else {
-            printf("No valid data received or data length mismatch.\n");
-        }
-        memset(data, 0, sizeof(data));
-        vTaskDelay(pdMS_TO_TICKS(500));  // Adjust delay as needed
-    }
-}
 
 static void uart_receive_task(void* pvParameters) {
     uint8_t data[44]; // Buffer for 11 floats (4 bytes each)
+
     while (1) {
-        int len = uart_read_bytes(UART_PORT, data, sizeof(data), pdMS_TO_TICKS(1000));
+        // int len = uart_read_bytes(UART_PORT, data, sizeof(data), pdMS_TO_TICKS(1000));
+        int len = mock_uart_read_bytes(UART_PORT, data, sizeof(data), pdMS_TO_TICKS(1000));
+
         // printf("DATA: %s\n", data);
         if (len == sizeof(data)) {
             float* sensorData = (float*)data;
@@ -239,12 +187,6 @@ static void uart_receive_task(void* pvParameters) {
             printf("GPS - Lat: %.6f, Lon: %.6f\n", sensorData[9], sensorData[10]);
             printf("--- End of Sensor Data Cycle ---\n");
 
-            // int sent_len = uart_write_bytes(UART_PORT, (const char*)data, sizeof(data));
-            // if (sent_len == sizeof(data)) {
-            //     printf("Sent data back successfully.\n");
-            // } else {
-            //     printf("Error in sending data back. Sent %d bytes.\n", sent_len);
-            // }
         } else {
             printf("Data length mismatch. Received %d bytes.\n", len);
         }
@@ -317,12 +259,14 @@ static void udp_server_task(void *pvParameters)
     mcpwm_oper_handle_t esc1_oper;
     mcpwm_gen_handle_t esc1_generator;
 
+    // Init ESC 2
     mcpwm_cmpr_handle_t esc2_comparator;
     mcpwm_timer_handle_t esc2_timer;
     mcpwm_oper_handle_t esc2_oper;
     mcpwm_gen_handle_t esc2_generator;
 
-        ESP_LOGI(TAG, "Create timer and operator");
+    // Create Timer 1
+    ESP_LOGI(TAG, "Create timer and operator");
     mcpwm_timer_config_t esc1_timer_config = {
         .group_id = 0,
         .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT,
@@ -332,7 +276,8 @@ static void udp_server_task(void *pvParameters)
     };
     ESP_ERROR_CHECK(mcpwm_new_timer(&esc1_timer_config, &esc1_timer));
 
-            ESP_LOGI(TAG, "Create timer and operator");
+    // Create Timer 2
+    ESP_LOGI(TAG, "Create timer and operator");
     mcpwm_timer_config_t esc2_timer_config = {
         .group_id = 0,
         .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT,
@@ -358,8 +303,6 @@ static void udp_server_task(void *pvParameters)
     ESP_LOGI(TAG, "Connect timer and operator");
     ESP_ERROR_CHECK(mcpwm_operator_connect_timer(esc2_oper, esc2_timer));
 
-
-
     ESP_LOGI(TAG, "Create comparator and generator from the operator");
     mcpwm_comparator_config_t esc1_comparator_config = {
         .flags.update_cmp_on_tez = true,
@@ -381,9 +324,6 @@ static void udp_server_task(void *pvParameters)
         .gen_gpio_num = ESC2_PULSE_GPIO,
     };
     ESP_ERROR_CHECK(mcpwm_new_generator(esc2_oper, &esc2_generator_config, &esc2_generator));
-
-    // set the initial compare value, so that the servo will spin to the center position
-    // ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, ESC_MIN_PULSEWIDTH_US));
 
     ESP_LOGI(TAG, "Set generator action on timer and compare event");
     // go high on counter empty
@@ -414,10 +354,6 @@ static void udp_server_task(void *pvParameters)
     printf("Start at half speed 2\n");
     ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc2_comparator, 1500));
     vTaskDelay(10000 / portTICK_PERIOD_MS);
-
-    // ESC2 INIT
-
-    esc_status = 1; // esc is ready
 
     while (1) {
 
@@ -542,18 +478,18 @@ static void udp_server_task(void *pvParameters)
                     token = strtok(NULL, ", "); // Move to the next token
                     if(strcmp(token, "R") == 0){
                         printf("Moving the Bot right\n");
-                        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc1_comparator, 1500));
+                        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc1_comparator, 1800));
                         ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc2_comparator, 2000));
                     }
                     else if(strcmp(token, "L") == 0){
                         printf("Moving the Bot left\n");
-                        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc1_comparator, 2000));
+                        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc1_comparator, 1800));
                         ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc2_comparator, 1500));
                     }
                     else if(strcmp(token, "F") == 0){
                         printf("Moving the Bot forward\n");
-                        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc1_comparator, 2000));
-                        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc2_comparator, 2000));
+                        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc1_comparator, 1800));
+                        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc2_comparator, 1800));
                     }
                     else if(strcmp(token, "S") == 0){
                         printf("Stopping the Bot\n");  
@@ -561,9 +497,9 @@ static void udp_server_task(void *pvParameters)
                         ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc2_comparator, 1500));
                     }
                     else if(strcmp(token, "B") == 0){
-                        printf("Stopping the Bot\n");  
-                        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc1_comparator, 1000));
-                        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc2_comparator, 1000));
+                        printf("Reverse the Bot\n");  
+                        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc1_comparator, 1200 ));
+                        ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(esc2_comparator, 1200 ));
                     }
                     else{printf("ERROR, Invalid Command");}
                 }
@@ -612,8 +548,11 @@ void app_main(void)
     uart_init();
 
     xTaskCreate(udp_server_task, "udp_server", 4096, (void*)AF_INET, 5, NULL);
-    xTaskCreate(udp_send_task, "udp_send", 4096, NULL, 5, NULL);
-    //xTaskCreate(i2c_read_buf_task, "i2c_read_buf", 4096, NULL, 4, NULL);
-    xTaskCreate(uart_receive_task, "uart_receive_task", 4096, NULL, 5, NULL);
+
+    // uncomment if you want to send send data
+    // xTaskCreate(udp_send_task, "udp_send", 4096, NULL, 5, NULL);
+
+    // Uncomment if you want to recieve data
+    // xTaskCreate(uart_receive_task, "uart_receive_task", 4096, NULL, 5, NULL);
 
 }
