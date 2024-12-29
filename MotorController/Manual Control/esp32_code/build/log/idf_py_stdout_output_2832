@@ -1,0 +1,59 @@
+[1/10] Performing build step for 'bootloader'
+[1/1] cd "/Users/noahrobitshek/SeniorDesign/Examples/Manual Control/esp32_code/build/bootloader/esp-idf/esptool_py" && /Users/noahrobitshek/.espressif/python_env/idf5.5_py3.13_env/bin/python /Users/noahrobitshek/esp/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x1000 /Users/noahrobitshek/SeniorDesign/Examples/Manual\ Control/esp32_code/build/bootloader/bootloader.bin
+Bootloader binary size 0x65c0 bytes. 0xa40 bytes (9%) free.
+[2/10] No install step for 'bootloader'
+[3/10] Completed 'bootloader'
+[4/10] Building C object esp-idf/main/CMakeFiles/__idf_main.dir/main.c.obj
+[5/10] Linking C static library esp-idf/main/libmain.a
+[6/10] Generating ld/sections.ld
+[7/10] Linking CXX executable uart_echo.elf
+[8/10] Generating binary image from built executable
+esptool.py v4.8.1
+Creating esp32 image...
+Merged 2 ELF sections
+Successfully created esp32 image.
+Generated /Users/noahrobitshek/SeniorDesign/Examples/Manual Control/esp32_code/build/uart_echo.bin
+[9/10] cd "/Users/noahrobitshek/SeniorDesign/Examples/Manual Control/esp32_code/build/esp-idf/esptool_py" && /Users/noahrobitshek/.espressif/python_env/idf5.5_py3.13_env/bin/python /Users/noahrobitshek/esp/esp-idf/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /Users/noahrobitshek/SeniorDesign/Examples/Manual\ Control/esp32_code/build/partition_table/partition-table.bin /Users/noahrobitshek/SeniorDesign/Examples/Manual\ Control/esp32_code/build/uart_echo.bin
+uart_echo.bin binary size 0x35050 bytes. Smallest app partition is 0x100000 bytes. 0xcafb0 bytes (79%) free.
+[9/10] cd /Users/noahrobitshek/esp/esp-idf/components/esptool_py && /opt/homebrew/bin/cmake -D IDF_PATH=/Users/noahrobitshek/esp/esp-idf -D "SERIAL_TOOL=/Users/noahrobitshek/.espressif/python_env/idf5.5_py3.13_env/bin/python;;/Users/noahrobitshek/esp/esp-idf/components/esptool_py/esptool/esptool.py;--chip;esp32" -D "SERIAL_TOOL_ARGS=--before=default_reset;--after=hard_reset;write_flash;@flash_args" -D "WORKING_DIRECTORY=/Users/noahrobitshek/SeniorDesign/Examples/Manual Control/esp32_code/build" -P /Users/noahrobitshek/esp/esp-idf/components/esptool_py/run_serial_tool.cmake
+esptool.py --chip esp32 -p /dev/cu.usbserial-0001 -b 460800 --before=default_reset --after=hard_reset write_flash --flash_mode dio --flash_freq 40m --flash_size 2MB 0x1000 bootloader/bootloader.bin 0x10000 uart_echo.bin 0x8000 partition_table/partition-table.bin
+esptool.py v4.8.1
+Serial port /dev/cu.usbserial-0001
+Connecting....
+Chip is ESP32-D0WD-V3 (revision v3.1)
+Features: WiFi, BT, Dual Core, 240MHz, VRef calibration in efuse, Coding Scheme None
+Crystal is 40MHz
+MAC: e4:65:b8:79:69:a8
+Uploading stub...
+Running stub...
+Stub running...
+Changing baud rate to 460800
+Changed.
+Configuring flash size...
+Flash will be erased from 0x00001000 to 0x00007fff...
+Flash will be erased from 0x00010000 to 0x00045fff...
+Flash will be erased from 0x00008000 to 0x00008fff...
+SHA digest in image updated
+Compressed 26048 bytes to 16446...
+Writing at 0x00001000... (50 %)
+Writing at 0x0000756e... (100 %)
+Wrote 26048 bytes (16446 compressed) at 0x00001000 in 0.7 seconds (effective 306.0 kbit/s)...
+Hash of data verified.
+Compressed 217168 bytes to 115844...
+Writing at 0x00010000... (12 %)
+Writing at 0x0001cb49... (25 %)
+Writing at 0x000240bc... (37 %)
+Writing at 0x00029f7c... (50 %)
+Writing at 0x0003075a... (62 %)
+Writing at 0x00038622... (75 %)
+Writing at 0x0003e35d... (87 %)
+Writing at 0x000447f3... (100 %)
+Wrote 217168 bytes (115844 compressed) at 0x00010000 in 3.1 seconds (effective 558.8 kbit/s)...
+Hash of data verified.
+Compressed 3072 bytes to 103...
+Writing at 0x00008000... (100 %)
+Wrote 3072 bytes (103 compressed) at 0x00008000 in 0.1 seconds (effective 346.5 kbit/s)...
+Hash of data verified.
+
+Leaving...
+Hard resetting via RTS pin...
