@@ -1,5 +1,0 @@
-
-// Compiling a c file
-gcc hello.c -o hello
-
-./hello

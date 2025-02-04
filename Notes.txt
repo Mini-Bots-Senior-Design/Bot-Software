@@ -1,1 +1,18 @@
+Lora Device Upload Speed:
+Upload Speed: 115200
+
+
+Path
 . $HOME/esp/esp-idf/export.sh
+
+Finding a port
+ls /dev/tty.*
+
+ports:
+lora: /dev/tty.usbserial-58971201781
+motor controller: /dev/tty.usbserial-0001 
+backup: /dev/tty.usbserial-5
+
+idf.py -p /dev/tty.usbserial-6 monitor
+idf.py -p /dev/tty.usbserial-0001 monitor
+
