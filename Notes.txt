@@ -16,3 +16,6 @@ backup: /dev/tty.usbserial-5
 idf.py -p /dev/tty.usbserial-6 monitor
 idf.py -p /dev/tty.usbserial-0001 monitor
 
+
+/dev/tty.usbserial-58930063581
+
