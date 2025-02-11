@@ -84,129 +84,104 @@ void setup() {
 
 }
 
-// // Task to be run on Core 1
-// void loop() {
-//     String inputString = "";  // String to hold the incoming data
-
-//     // Read bytes from the serial until a newline character is found
-//     while (Serial.available() > 0) {
-
-//       // TODO: Change this to read from LoRA, or have the option to...
-//       char incomingByte = Serial.read();  // Read a byte from Serial
-
-//       if (incomingByte == '\n') {
-
-//         // Split String
-//         int index = inputString.indexOf(' ');  // Find the position of the comma
-
-//         String inputKey = inputString.substring(0, index);      // "Hello"
-//         String OtherParts = inputString.substring(index + 1);    // "World"
-
-//         // Startup Mode: STARTUP
-//         if(inputKey == "STARTUP"){
-//           STATE = "STARTUP";
-//           Serial.println("In Startup Mode");
-//         }
-
-//         // Manual Mode: MOV
-//         else if(inputKey == "MOV"){
-
-//           String direction = inputString.substring(index + 1); 
-//           STATE = "MOV";
-
-//           Serial.println("// MOV //");
-
-//           Serial.print("The state is: ");
-//           Serial.println(STATE);
-
-//           Serial.print("The inputKey is: ");
-//           Serial.println(inputKey);
-
-//           Serial.print("The direction is: ");
-//           Serial.println(direction);
-
-
-//           // Testing up and down
-//           if(direction == "w"){
-//             Serial.println("Forward");
-//             pulseWidth = 1700;
-//           }
-//           else if(direction == "s"){
-//             Serial.println("Backward");
-//             pulseWidth = 1300;
-//           }
-//           else {
-//             Serial.println("Not sure what the input is??");
-//           }
-          
-//           Serial.println("// MOV //");
-//         }
-
-//         // Test Mode: TEST
-//         else if(inputKey == "TEST"){
-//           Serial.println("In Test Mode");
-//         }
-
-//         // Base Case
-//         else {
-//           Serial.println("Invalid Input");
-//         }
-
-//         // GPS Mode: MOVGPS
-//         // PWM Mode: MOVPWM
-      
-//       // Clear the string for the next line
-//       inputString = "";
-//       } else {
-//         // Otherwise, add the byte to the string
-//         inputString += incomingByte;
-//       }
-
-//       delay(100);
-//     }
-// }
-
-
-// // Task to be run on Core 0 (main loop will still run here)
-// void TaskCore0(void *pvParameters) {
-//   while (true) {
-//     Serial.println("Running on Core 0");
-//     delay(1000);  // Simulate work by delaying for 1 second
-//   }
-// }
-
-// void loop(){
-//     Serial.println("motor control");
-//     float lowTime = (20000 - pulseWidth);
-
-//     digitalWrite(ESC1_PWM_PIN, HIGH);  // Start PWM pulse
-//     delayMicroseconds(pulseWidth);     // Wait for pulseWidth duration in milliseconds (non-blocking)
-//     digitalWrite(ESC1_PWM_PIN, LOW);   // End pulse
-//     delayMicroseconds(lowTime);     // Wait for pulseWidth duration in milliseconds (non-blocking)
-// }
-
+// Task to be run on Core 1
 void loop() {
+    String inputString = "";  // String to hold the incoming data
 
+    // Read bytes from the serial until a newline character is found
+    while (Serial.available() > 0) {
+
+      // TODO: Change this to read from LoRA, or have the option to...
+      char incomingByte = Serial.read();  // Read a byte from Serial
+
+      if (incomingByte == '\n') {
+
+        // Split String
+        int index = inputString.indexOf(' ');  // Find the position of the comma
+
+        String inputKey = inputString.substring(0, index);      // "Hello"
+        String OtherParts = inputString.substring(index + 1);    // "World"
+
+        // Startup Mode: STARTUP
+        if(inputKey == "STARTUP"){
+          STATE = "STARTUP";
+          Serial.println("In Startup Mode");
+
+          // TODO: add code to set pulseWidth to be 1500
+          pulseWidth = 1700;
+
+
+        }
+
+        // Manual Mode: MOV
+        else if(inputKey == "MOV"){
+
+          String direction = inputString.substring(index + 1); 
+          STATE = "MOV";
+
+          Serial.println("// MOV //");
+
+          Serial.print("The state is: ");
+          Serial.println(STATE);
+
+          Serial.print("The inputKey is: ");
+          Serial.println(inputKey);
+
+          Serial.print("The direction is: ");
+          Serial.println(direction);
+
+
+          // Testing up and down
+          if(direction == "w"){
+            Serial.println("Forward");
+            pulseWidth = 1700;
+          }
+          else if(direction == "s"){
+            Serial.println("Backward");
+            pulseWidth = 1300;
+          }
+          else {
+            Serial.println("Not sure what the input is??");
+          }
+          
+          Serial.println("// MOV //");
+        }
+
+        // Test Mode: TEST
+        else if(inputKey == "TEST"){
+          Serial.println("In Test Mode");
+        }
+
+        // Base Case
+        else {
+          Serial.println("Invalid Input");
+        }
+
+        // GPS Mode: MOVGPS
+        // PWM Mode: MOVPWM
+      
+      // Clear the string for the next line
+      inputString = "";
+      } else {
+        // Otherwise, add the byte to the string
+        inputString += incomingByte;
+      }
+
+      delay(100);
+    }
 }
 
+
+
+
+// currently working
 void motor1Control(void *parameter) {
   while (true) {
     // Test
-    for (int i = 0; i < 750; i++) {  // Loop 10 times
-      digitalWrite(ESC1_PWM_PIN, HIGH);  // Start PWM pulse
-      delayMicroseconds(pulseWidth);     // Wait for pulseWidth duration in milliseconds (non-blocking)
-      digitalWrite(ESC1_PWM_PIN, LOW);  // Start PWM pulse
-      delayMicroseconds(20000 - pulseWidth);     // Wait for pulseWidth duration in milliseconds (non-blocking)
-    }
-
-    pulseWidth = pulseWidth + 200;
-
-    for (int i = 0; i < 750; i++) {  // Loop 10 times
-      digitalWrite(ESC1_PWM_PIN, HIGH);  // Start PWM pulse
-      delayMicroseconds(pulseWidth);     // Wait for pulseWidth duration in milliseconds (non-blocking)
-      digitalWrite(ESC1_PWM_PIN, LOW);  // Start PWM pulse
-      delayMicroseconds(20000 - pulseWidth);     // Wait for pulseWidth duration in milliseconds (non-blocking)
-    }
+    digitalWrite(ESC1_PWM_PIN, HIGH);  // Start PWM pulse
+    delayMicroseconds(pulseWidth);     // Wait for pulseWidth duration in milliseconds (non-blocking)
+    digitalWrite(ESC1_PWM_PIN, LOW);  // Start PWM pulse
+    delayMicroseconds(20000 - pulseWidth);     // Wait for pulseWidth duration in milliseconds (non-blocking)
   }
 }
 
