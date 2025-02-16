@@ -9,12 +9,11 @@
 // TEST
 // MOVGPS
 // MOVPWM
-// INVALID
 String STATE = "STARTUP";
 
 // Define PWM output pin
-#define ESC1_PWM_PIN 2  // Pin for Motor 1
-#define ESC2_PWM_PIN 10 // Pin for Motor 2
+#define ESC1_PWM_PIN 13  // Pin for Motor 1
+#define ESC2_PWM_PIN 2 // Pin for Motor 2
 
 // Define pulse width range (in microseconds)
 #define ESC_MIN_PULSEWIDTH_US 1000  // 1ms = Minimum speed (or stop)
@@ -25,11 +24,10 @@ String STATE = "STARTUP";
 #define PWM_PERIOD_MS   20    // 20ms period (1/Frequency)
 
 // Current pulse width (start at minimum)
-volatile int pulseWidth = 1500; // Middle Range 
+int pulseWidth = 1500; // Middle Range 
 
-volatile int leftPulseWidth = 1500; // Middle Range 
-volatile int rightPulseWidth = 1500; // Middle Range 
-
+int leftPulseWidth = 1500; // Middle Range 
+int rightPulseWidth = 1500; // Middle Range 
 
 
 void setup() {
@@ -49,38 +47,6 @@ void setup() {
     NULL,            // Task handle
     1                // Core to run on (Core 1)
   );
-
-  // xTaskCreatePinnedToCore(
-  //   motor2Control,   // Function to run
-  //   "Motor2 Task",   // Name of the task
-  //   1000,            // Stack size (bytes)
-  //   NULL,            // Task input parameter
-  //   1,               // Task priority (1 is low)
-  //   NULL,            // Task handle
-  //   1                // Core to run on (Core 1)
-  // );
-
-  //   // Create Task for Core 0
-  // xTaskCreatePinnedToCore(
-  //   TaskCore0,    // Task function
-  //   "TaskCore0",  // Task name
-  //   10000,        // Stack size
-  //   NULL,         // Parameters
-  //   1,            // Task priority
-  //   NULL,         // Task handle
-  //   0             // Core 0
-  // );
-  
-  // // Create Task for Core 1
-  // xTaskCreatePinnedToCore(
-  //   stateMachine,    // Task function
-  //   "stateMachine",  // Task name
-  //   10000,        // Stack size
-  //   NULL,         // Parameters
-  //   1,            // Task priority
-  //   NULL,         // Task handle
-  //   1             // Core 1
-  // );
 
 }
 
@@ -108,7 +74,7 @@ void loop() {
           Serial.println("In Startup Mode");
 
           // TODO: add code to set pulseWidth to be 1500
-          pulseWidth = 1700;
+          pulseWidth = 1500;
 
 
         }
@@ -158,6 +124,7 @@ void loop() {
         }
 
         // GPS Mode: MOVGPS
+
         // PWM Mode: MOVPWM
       
       // Clear the string for the next line
@@ -172,8 +139,6 @@ void loop() {
 }
 
 
-
-
 // currently working
 void motor1Control(void *parameter) {
   while (true) {
@@ -185,22 +150,5 @@ void motor1Control(void *parameter) {
   }
 }
 
-// void motor2Control(void *parameter) {
-//   while (true) {
-//     Serial.print("Motor 2 Control: ");
-//     int lowTime = (int)round((20000 - pulseWidth) / 1000.0);
-
-
-//     // digitalWrite(ESC2_PWM_PIN, HIGH);  // Start PWM pulse
-//     // vTaskDelay(pulseWidth);     // Wait for pulseWidth duration in milliseconds (non-blocking)
-//     // digitalWrite(ESC2_PWM_PIN, LOW);   // End pulse
-//     // vTaskDelay(pulseWidth / 1000);     // Wait for pulseWidth duration in milliseconds (non-blocking)
-
-//     // debug
-//     // Serial.println("Hi");
-//     Serial.println(lowTime);
-//     vTaskDelay(1000);    
-//   }
-// }
 
 
