@@ -48,34 +48,21 @@ TaskHandle_t BotTaskHandle = NULL;
 
 void setup() {
   // Start communication with the Serial Monitor (USB Serial)
-  Serial.begin(115200); // Standard baud rate for Serial Monitor
+  Serial.begin(115200); 
 
+  // Motor Setup
   motor1.setPeriodHertz(frequency);// Standard 50hz servo
   motor2.setPeriodHertz(frequency);// Standard 50hz servo
-
   motor1.attach(motorpin1, minUs, maxUs);   // attaches the servo on pin 18 to the servo object
   motor2.attach(motorpin2, minUs, maxUs);   // attaches the servo on pin 18 to the servo object
 
-  xTaskCreate(
-      task1,   // Function to run
-      "task1", // Name of the task
-      1000,    // Stack size (bytes)
-      NULL,    // Task input parameter
-      1,       // Task priority (1 is low)
-      NULL     // Task handle (optional)
-  );
-
-  xTaskCreate(
-      task2,   // Function to run
-      "task2", // Name of the task
-      1000,    // Stack size (bytes)
-      NULL,    // Task input parameter
-      1,       // Task priority (1 is low)
-      NULL     // Task handle (optional)
-  );
+  // Create Tasks, 
+  xTaskCreate(task1, "task1", 1000, NULL,1,NULL);
+  xTaskCreate(task2, "task2", 1000, NULL,1,NULL);
 
   delay(1000); // short delay
 
+  // Calibrate Motors
   Serial.println("Calibrating Motors...");
   motor1.write(90);                 
   motor2.write(90);
@@ -96,25 +83,25 @@ void setup() {
 
 // Reads the Serial Port
 void loop() {
-    // String inputString = "";  // String to hold the incoming data
+    String inputString = "";  // String to hold the incoming data
 
-    // // Read bytes from the serial until a newline character is found
-    // while (Serial.available() > 0) {
+    // Read bytes from the serial until a newline character is found
+    while (Serial.available() > 0) {
 
-    //   // TODO: Change this to read from LoRA, or have the option to...
-    //   char incomingByte = Serial.read();  // Read a byte from Serial
+      // TODO: Change this to read from LoRA, or have the option to...
+      char incomingByte = Serial.read();  // Read a byte from Serial
 
-    //   if (incomingByte == '\n') {
+      if (incomingByte == '\n') {
 
-    //     parseInput(inputString);
+        parseInput(inputString);
       
-    //     inputString = "";// Clear the string for the next line
-    //   } else {
-    //     // Otherwise, add the byte to the string
-    //     inputString += incomingByte;
-    //   }
-    //   delay(100);
-    // }
+        inputString = "";// Clear the string for the next line
+      } else {
+        // Otherwise, add the byte to the string
+        inputString += incomingByte;
+      }
+      delay(100);
+    }
 }
 
 
