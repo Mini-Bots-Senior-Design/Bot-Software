@@ -23,6 +23,8 @@ int frequency = 50; // 50Hz
 int motorpin1 = 13;      // GPIO pin used to connect the servo control (digital out) 
 int motorpin2 = 2;      // GPIO pin used to connect the servo control (digital out)  
 
+const char* BOTID = "1";
+
 void setup() {
   // Start communication with the Serial Monitor (USB Serial)
   Serial.begin(115200); // Standard baud rate for Serial Monitor
@@ -58,7 +60,7 @@ void setup() {
   Serial.println("Startup Completed");
 }
 
-// Task to be run on Core 1
+// Reads the Serial Port
 void loop() {
     String inputString = "";  // String to hold the incoming data
 
@@ -82,72 +84,105 @@ void loop() {
 }
 
 
+///////////////////////////////////
+// {BotID, Command, Parameters} //
+//////////////////////////////////
 
-// Parse the user input and move the motors
+// BotID: {1,2,3,4}
+// Command: {MOV, MOVPWM, MOVGPS, STARTUP}
+
+// Parameters: 
+//  MOV: {F,L,R,S,B}
+//  MOVGPS: {LAT, LAN}
+//  MOVPWM: {PWMLeft, PWMRight}
 void parseInput(String inputString){
 
-  int index = inputString.indexOf(' ');  // Find the position of the comma
+  // Parse Commas
+  int indexOfFirstComma = inputString.indexOf(',');   
+  int indexOfSecondComma = inputString.indexOf(',', indexOfFirstComma + 1);  
 
-  String inputKey = inputString.substring(0, index);      // "Hello"
-  String OtherParts = inputString.substring(index + 1);    // "World"
+  // Extract "BotID"
+  String BotID = inputString.substring(0, indexOfFirstComma);  
+  Serial.println("BotID: " + BotID);
 
-  // Startup Mode: STARTUP
-  if(inputKey == "STARTUP"){
-    STATE = "STARTUP";
-    Serial.println("In Startup Mode");
+  if(BotID == BOTID){
 
-      // Set both motors to stopped
+    // Extract Command
+    String Command = inputString.substring(indexOfFirstComma + 1, indexOfSecondComma); 
+    Serial.println("Command: " + Command);
+
+    // MOV
+    if(Command == "MOV"){
+      Serial.println("moovin and grovin");
+
+      // Extract Command
+      int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
+      String Direction = inputString.substring(indexOfSecondComma + 1, indexOfThirdComma); 
+      Serial.println("Direction: " + Direction);
+
+      // Move the Motors
+      moveMotorsForMOV(Direction);
+    }
+
+    // MOVGPS
+    else if(Command == "MOVGPS"){
+      Serial.println("moovin with da gpss");
+
+      // TD: Parse the GPS Points
+    }
+
+    // MOVPWM
+    else if(Command == "MOVPWM"){
+      Serial.println("moovin with da da pwmm");
+
+      // TD: Parse the PWM Values
+      // TD: Send PWM Values to the Motors
+    }
+
+    // STARTUP
+    else if(Command == "STARTUP"){
+      Serial.println("startin this up");
       motor1.write(90);                 
-      motor2.write(90);                  
-  }
-
-  // Manual Mode: MOV
-  else if(inputKey == "MOV"){
-
-    String direction = inputString.substring(index + 1); 
-    STATE = "MOV";
-
-    Serial.println("// MOV //");
-
-    Serial.print("The state is: ");
-    Serial.println(STATE);
-
-    Serial.print("The inputKey is: ");
-    Serial.println(inputKey);
-
-    Serial.print("The direction is: ");
-    Serial.println(direction);
-
-
-    // Testing up and down
-    if(direction == "w"){
-      Serial.println("Forward");
-      motor1.write(110);                 
-      motor2.write(110);  
+      motor2.write(90);
     }
-    else if(direction == "s"){
-      Serial.println("Backward");
-      motor1.write(70);                 
-      motor2.write(70);  
-    }
-    else {
-      Serial.println("Not sure what the direction is??");
-    }
-    
-    Serial.println("// MOV //");
-  }
-
-  // Test Mode: TEST
-  else if(inputKey == "TEST"){
-    Serial.println("In Test Mode");
-  }
-
-  // Base Case
-  else {
-    Serial.println("Invalid Input");
+  } 
+  else{
+    Serial.println("Incorrect BotID"); // DEBUG
   }
 }
 
+void moveMotorsForMOV(String direction){
+  if(direction == "F"){
+    Serial.println("Movin Forward");
+    motor1.write(110);                 
+    motor2.write(110); 
+  }
+  else if(direction == "B"){
+    Serial.println("Movin Back");
+    motor1.write(70);                 
+    motor2.write(70); 
+  }
+  else if(direction == "L"){
+    Serial.println("Movin Left");
+    motor1.write(110);                 
+    motor2.write(70); 
+  }
+  else if(direction == "R"){
+    Serial.println("Movin Right");
+    motor1.write(70);                 
+    motor2.write(110); 
+  }
+  else if(direction == "S"){
+    Serial.println("Movin Stop");
+    motor1.write(90);                 
+    motor2.write(90); 
+  }
+  else{
+    Serial.println("Incorrect Format");
+  }
+}
+
+// Reads the GPS Data
 void task1(void *parameter) {
   while (true) {
     Serial.println("Reading Data 1");
