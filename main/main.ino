@@ -23,6 +23,9 @@ int motorpin2 = 2;      // GPIO pin used to connect the servo control (digital o
 
 const char* BOTID = "1";
 
+int lat = 0;
+int lon = 0;
+
 // LoRa start
 #include "LoRaBoards.h"
 #include <RadioLib.h>
@@ -58,7 +61,6 @@ void setup() {
 
   // Create Tasks, 
   xTaskCreate(task1, "task1", 1000, NULL,1,NULL);
-  xTaskCreate(task2, "task2", 1000, NULL,1,NULL);
 
   delay(1000); // short delay
 
@@ -203,33 +205,40 @@ void moveMotorsForMOV(String direction){
   }
 }
 
+
+
 // Reads the GPS Data
 void task1(void *parameter) {
   while (true) {
+    Serial.println("Reading GPS Data");
+
+    if(DEBUG){
+      lat = 0;
+      lon = 0;
+    }
+    else{
+
+    }
     Serial.println("Reading Data 1");
     vTaskDelay(1000);    
   }
 }
 
-void task2(void *parameter) {
-  while (true) {
-    Serial.println("Reading Data 2");
-    vTaskDelay(1000);    
-  }
-}
+
 
 ////////////////////
 // LoRa Functions //
 ////////////////////
 
 // Callback functions for RadioLib events
-void setReceiverFlag() {
-    receivedFlag = true;
-}
+void setReceiverFlag() {receivedFlag = true;}
 
-void setTransmissionFlag() {
-    transmittedFlag = true;
-}
+void setTransmissionFlag() {transmittedFlag = true;}
+
+
+//////////////////////////
+// LoRa Setup Functions //
+//////////////////////////
 
 // Function to initialize LoRa for receiving
 void setupReceive() {
@@ -284,38 +293,39 @@ void setupTransmit() {
 
 // Bot Task: Listen for requests, then send ID when requested
 void BotTask(void *pvParameters) {
-    setupReceive();  // Start in receive mode
-    String receivedMessage;
 
-    while (1) {
-        if (xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
+  setupReceive();  // Start in receive mode
+  String receivedMessage;
 
-          int state = radio.receive(receivedMessage);
+  while (1) {
+    if (xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
 
-          if (state == RADIOLIB_ERR_NONE && receivedFlag) {
-            Serial.println("Received: " + receivedMessage);
+      int state = radio.receive(receivedMessage);
 
-            parseInput(receivedMessage);
+      if (state == RADIOLIB_ERR_NONE && receivedFlag) {
+        Serial.println("Received: " + receivedMessage);
 
-            // Reset and setup trasmit setting
-            transmittedFlag = false;
-            setupTransmit();
-            delay(200); // Reduced delay from 1500ms to 200ms
+        parseInput(receivedMessage);
 
-            // Setup Payload, later functionize this
-            payload = "0,1,45,45";
+        // Reset and setup trasmit setting
+        transmittedFlag = false;
+        setupTransmit();
+        delay(200); // Reduced delay from 1500ms to 200ms
 
-            int transmissionState = radio.transmit(payload);
-            handleTransmission(transmittedFlag, transmissionState);
+        // Setup Payload, later functionize this
+        payload = "0,1,45,45";
 
-            // Reset and setup receive setting
-            setupReceive();  
-            receivedFlag = false;
-          }
-          xSemaphoreGive(xSemaphore);
-          vTaskDelay(100 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
-        }
+        int transmissionState = radio.transmit(payload);
+        handleTransmission(transmittedFlag, transmissionState);
+
+        // Reset and setup receive setting
+        setupReceive();  
+        receivedFlag = false;
+      }
+      xSemaphoreGive(xSemaphore);
+      vTaskDelay(100 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
     }
+  }
 }
 
 void handleTransmission(bool transmittedFlag, int transmissionState){
