@@ -27,7 +27,7 @@ long lat = 0;
 long lon = 0;
 
 // Switch to get real value
-bool DEBUG = false;
+bool DEBUG = true;
 
 // LoRa start
 #include "LoRaBoards.h"
@@ -82,10 +82,7 @@ void setup() {
   delay(5000); 
   Serial.println("Calibration Finished");
 
-
-
-  // LoRa Calibration Start
-  setupBoards();  // Assuming this is defined elsewhere
+  setupLoRa();
 
   xSemaphore = xSemaphoreCreateBinary();
   xSemaphoreGive(xSemaphore);
@@ -113,6 +110,27 @@ void setup() {
 
 
   Serial.println("Startup Completed");
+}
+
+void setupLoRa() {
+    setupBoards();
+
+    int state = radio.begin();
+    if (state != RADIOLIB_ERR_NONE) {
+        Serial.print(F("LoRa init failed, code: "));
+        Serial.println(state);
+        while (true);
+    }
+
+    radio.setFrequency(433.0);
+    radio.setBandwidth(125.0);
+    radio.setSpreadingFactor(12);
+    radio.setCodingRate(6);
+    radio.setSyncWord(0x12);
+    radio.setOutputPower(17);
+
+    radio.setPacketSentAction(setTransmissionFlag);
+    radio.setPacketReceivedAction(setReceiverFlag);
 }
 
 // Reads the Serial Port
@@ -252,6 +270,19 @@ void moveMotorsForMOV(String direction){
 void setReceiverFlag() {receivedFlag = true;}
 void setTransmissionFlag() {transmittedFlag = true;}
 
+void switchToTransmitMode() {
+    radio.standby();  // Ensure module is in standby before transmit
+    transmittedFlag = false;
+    //Serial.println("Switching to Transmit Mode");
+}
+
+void switchToReceiveMode() {
+    radio.standby();
+    receivedFlag = false;
+    radio.startReceive();  // Start listening
+    //Serial.println("Switching to Receive Mode");
+}
+
 String createPayload(){
 
   String latLon = getGPS();
@@ -268,56 +299,7 @@ String createPayload(){
 // LoRa Setup Functions //
 //////////////////////////
 
-// Function to initialize LoRa for receiving
-void setupReceive() {
-    Serial.println("Initializing Receive Mode...");
 
-    radio.reset();
-    delay(1500); // was three before
-
-    int state = radio.begin();
-    if (state != RADIOLIB_ERR_NONE) {
-        Serial.print(F("Radio init failed, code: "));
-        Serial.println(state);
-        while (true);
-    }
-
-    radio.setFrequency(433.0);
-    radio.setBandwidth(125.0);
-    radio.setSpreadingFactor(12);
-    radio.setCodingRate(6);
-    radio.setSyncWord(0x12);
-
-    radio.setPacketReceivedAction(setReceiverFlag);
-    Serial.println("Receive mode ready.");
-    Serial.println("");
-    Serial.println("Bot listening for command...");
-}
-
-// Function to initialize LoRa for transmitting
-void setupTransmit() {
-    Serial.println("Initializing Transmit Mode...");
-
-    radio.reset();
-    delay(1500);
-
-    int state = radio.begin();
-    if (state != RADIOLIB_ERR_NONE) {
-        Serial.print(F("Radio init failed, code: "));
-        Serial.println(state);
-        while (true);
-    }
-
-    radio.setFrequency(433.0);
-    radio.setBandwidth(125.0);
-    radio.setSpreadingFactor(12);
-    radio.setCodingRate(6);
-    radio.setSyncWord(0x12);
-    radio.setOutputPower(17);  // Max safe power for 433MHz SX1278 // changed from 15 to 17
-
-    radio.setPacketSentAction(setTransmissionFlag);
-    Serial.println("Transmit mode ready.");
-}
 
 void handleTransmission(bool transmittedFlag, int transmissionState){
   if (transmittedFlag) {
@@ -330,7 +312,7 @@ void handleTransmission(bool transmittedFlag, int transmissionState){
 // Bot Task: Listen for requests, then send ID when requested
 void BotTask(void *pvParameters) {
 
-  setupReceive();  // Start in receive mode
+  switchToReceiveMode();  // Start in receive mode
   String receivedMessage;
 
   while (1) {
@@ -344,18 +326,17 @@ void BotTask(void *pvParameters) {
         if(parseInput(receivedMessage)){
           // Reset and setup trasmit setting
           transmittedFlag = false;
-          setupTransmit();
+          switchToTransmitMode();
           // delay(200); // Reduced delay from 1500ms to 200ms
 
           // Setup Payload, later functionize this
           payload = createPayload();
 
           int transmissionState = radio.transmit(payload);
-          handleTransmission(transmittedFlag, transmissionState);
         }
 
         // Reset and setup receive setting
-        setupReceive();  
+        switchToReceiveMode();  
         receivedFlag = false;
       }
       xSemaphoreGive(xSemaphore);
@@ -367,9 +348,12 @@ void BotTask(void *pvParameters) {
 String getGPS(){
   if(DEBUG){
     Serial.println("Sampling Fake GPS Data");
-    lat = 0;
-    lon = 0;
-    vTaskDelay(1000);    
+    long latReading = 1000;
+    long lonReading = 1000;
+
+    String returnString = String(latReading) + "," + String(lonReading);
+    vTaskDelay(10);
+    return returnString;    
   }
   else{
     Serial.println("Sampling Real GPS Data");
