@@ -23,8 +23,11 @@ int motorpin2 = 2;      // GPIO pin used to connect the servo control (digital o
 
 const char* BOTID = "1";
 
-int lat = 0;
-int lon = 0;
+long lat = 0;
+long lon = 0;
+
+// Switch to get real value
+bool DEBUG = false;
 
 // LoRa start
 #include "LoRaBoards.h"
@@ -48,6 +51,14 @@ SemaphoreHandle_t xSemaphore;
 TaskHandle_t BotTaskHandle = NULL;
 // LoRa end
 
+// GPS Start
+#include <Wire.h> //Needed for I2C to GNSS
+#include <SparkFun_u-blox_GNSS_v3.h> //http://librarymanager/All#SparkFun_u-blox_GNSS_v3
+
+SFE_UBLOX_GNSS myGNSS;
+long lastTime = 0; //Simple local timer. Limits amount if I2C traffic to u-blox module.
+// GPS End
+
 
 void setup() {
   // Start communication with the Serial Monitor (USB Serial)
@@ -60,7 +71,7 @@ void setup() {
   motor2.attach(motorpin2, minUs, maxUs);   // attaches the servo on pin 18 to the servo object
 
   // Create Tasks, 
-  xTaskCreate(task1, "task1", 1000, NULL,1,NULL);
+  //xTaskCreate(task1, "task1", 1000, NULL,1,NULL);
 
   delay(1000); // short delay
 
@@ -71,6 +82,8 @@ void setup() {
   delay(5000); 
   Serial.println("Calibration Finished");
 
+
+
   // LoRa Calibration Start
   setupBoards();  // Assuming this is defined elsewhere
 
@@ -79,6 +92,25 @@ void setup() {
 
   xTaskCreate(BotTask, "Bot Task", 2048, NULL, 1, NULL);
   // LoRa Calibration End
+
+
+
+  // GPS Start //
+  Serial.println("Configuring GPS....");
+
+  Wire.begin();
+
+  if (myGNSS.begin() == false) //Connect to the u-blox module using Wire port
+  {
+    Serial.println(F("u-blox GNSS not detected at default I2C address. Please check wiring. Freezing."));
+    while (1);
+  }
+
+  myGNSS.setI2COutput(COM_TYPE_UBX); //Set the I2C port to output UBX only (turn off NMEA noise)
+  myGNSS.saveConfigSelective(VAL_CFG_SUBSEC_IOPORT); //Save (only) the communications port settings to flash and BBR
+  Serial.println("GPS Configured");
+  // GPS End // 
+
 
   Serial.println("Startup Completed");
 }
@@ -118,7 +150,7 @@ void loop() {
 //  MOVPWM: {PWMLeft, PWMRight}
 
 // Ex. 1,MOV,L
-void parseInput(String inputString){
+bool parseInput(String inputString){
 
   // Parse Commas
   int indexOfFirstComma = inputString.indexOf(',');   
@@ -126,22 +158,22 @@ void parseInput(String inputString){
 
   // Extract "BotID"
   String BotID = inputString.substring(0, indexOfFirstComma);  
-  Serial.println("BotID: " + BotID);
+  // Serial.println("BotID: " + BotID);
 
   if(BotID == BOTID){
 
     // Extract Command
     String Command = inputString.substring(indexOfFirstComma + 1, indexOfSecondComma); 
-    Serial.println("Command: " + Command);
+    // Serial.println("Command: " + Command);
 
     // MOV
     if(Command == "MOV"){
-      Serial.println("moovin and grovin");
+      // Serial.println("moovin and grovin");
 
       // Extract Command
       int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
       String Direction = inputString.substring(indexOfSecondComma + 1, indexOfThirdComma); 
-      Serial.println("Direction: " + Direction);
+      // Serial.println("Direction: " + Direction);
 
       // Move the Motors
       moveMotorsForMOV(Direction);
@@ -149,7 +181,7 @@ void parseInput(String inputString){
 
     // MOVGPS
     else if(Command == "MOVGPS"){
-      Serial.println("moovin with da gpss");
+      // Serial.println("moovin with da gpss");
 
       // TD: Parse the GPS Points
     }
@@ -164,14 +196,19 @@ void parseInput(String inputString){
 
     // STARTUP
     else if(Command == "STARTUP"){
-      Serial.println("startin this up");
+      // Serial.println("startin this up");
       motor1.write(90);                 
       motor2.write(90);
     }
+
+    // If the command is not anything is knows, it will send back status
+    return true;
   } 
   else{
     Serial.println("Incorrect BotID"); // DEBUG
+    return false;
   }
+
 }
 
 void moveMotorsForMOV(String direction){
@@ -207,33 +244,24 @@ void moveMotorsForMOV(String direction){
 
 
 
-// Reads the GPS Data
-void task1(void *parameter) {
-  while (true) {
-    Serial.println("Reading GPS Data");
-
-    if(DEBUG){
-      lat = 0;
-      lon = 0;
-    }
-    else{
-
-    }
-    Serial.println("Reading Data 1");
-    vTaskDelay(1000);    
-  }
-}
-
-
-
 ////////////////////
 // LoRa Functions //
 ////////////////////
 
 // Callback functions for RadioLib events
 void setReceiverFlag() {receivedFlag = true;}
-
 void setTransmissionFlag() {transmittedFlag = true;}
+
+String createPayload(){
+
+  String latLon = getGPS();
+
+  String createdString = "0," + String(BOTID) + "," + latLon;
+
+  Serial.print("Payload created: ");
+  Serial.println(createdString);
+  return createdString;
+}
 
 
 //////////////////////////
@@ -245,7 +273,7 @@ void setupReceive() {
     Serial.println("Initializing Receive Mode...");
 
     radio.reset();
-    delay(3000);
+    delay(1500); // was three before
 
     int state = radio.begin();
     if (state != RADIOLIB_ERR_NONE) {
@@ -291,6 +319,14 @@ void setupTransmit() {
     Serial.println("Transmit mode ready.");
 }
 
+void handleTransmission(bool transmittedFlag, int transmissionState){
+  if (transmittedFlag) {
+    Serial.println("Bot transmitted: " + payload);
+  } else {
+    Serial.println("Transmit error, code " + String(transmissionState));
+  }
+}
+
 // Bot Task: Listen for requests, then send ID when requested
 void BotTask(void *pvParameters) {
 
@@ -305,18 +341,18 @@ void BotTask(void *pvParameters) {
       if (state == RADIOLIB_ERR_NONE && receivedFlag) {
         Serial.println("Received: " + receivedMessage);
 
-        parseInput(receivedMessage);
+        if(parseInput(receivedMessage)){
+          // Reset and setup trasmit setting
+          transmittedFlag = false;
+          setupTransmit();
+          // delay(200); // Reduced delay from 1500ms to 200ms
 
-        // Reset and setup trasmit setting
-        transmittedFlag = false;
-        setupTransmit();
-        delay(200); // Reduced delay from 1500ms to 200ms
+          // Setup Payload, later functionize this
+          payload = createPayload();
 
-        // Setup Payload, later functionize this
-        payload = "0,1,45,45";
-
-        int transmissionState = radio.transmit(payload);
-        handleTransmission(transmittedFlag, transmissionState);
+          int transmissionState = radio.transmit(payload);
+          handleTransmission(transmittedFlag, transmissionState);
+        }
 
         // Reset and setup receive setting
         setupReceive();  
@@ -328,13 +364,30 @@ void BotTask(void *pvParameters) {
   }
 }
 
-void handleTransmission(bool transmittedFlag, int transmissionState){
-  if (transmittedFlag) {
-    Serial.println("Bot transmitted: " + payload);
-  } else {
-    Serial.println("Transmit error, code " + String(transmissionState));
+String getGPS(){
+  if(DEBUG){
+    Serial.println("Sampling Fake GPS Data");
+    lat = 0;
+    lon = 0;
+    vTaskDelay(1000);    
   }
+  else{
+    Serial.println("Sampling Real GPS Data");
+      
+    long latReading = myGNSS.getLatitude();
+    long lonReading = myGNSS.getLongitude();
+
+    String returnString = String(latReading) + "," + String(lonReading);
+
+    return returnString;
 }
+}
+
+// {0,BOTID, LAT, LON}
+
+
+
+
 
 
 
