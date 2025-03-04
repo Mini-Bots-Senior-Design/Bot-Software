@@ -220,7 +220,6 @@ bool parseInput(String inputString){
       String rightPWMString = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma); 
 
       moveMotorsForMOVPWM(leftPWMString.toInt(), leftPWMString.toInt());
-
     }
 
     // STARTUP
