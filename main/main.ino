@@ -21,7 +21,7 @@ int frequency = 50; // 50Hz
 int motorpin1 = 13;      // GPIO pin used to connect the servo control (digital out) 
 int motorpin2 = 2;      // GPIO pin used to connect the servo control (digital out)  
 
-const char* BOTID = "1";
+const char* BOTID = "2";
 
 long lat = 0;
 long lon = 0;
@@ -93,19 +93,20 @@ void setup() {
 
 
   // GPS Start //
-  Serial.println("Configuring GPS....");
+  // Serial.println("Configuring GPS....");
 
-  Wire.begin();
+  // Wire.begin();
+  // delay(1000);
 
-  if (myGNSS.begin() == false) //Connect to the u-blox module using Wire port
-  {
-    Serial.println(F("u-blox GNSS not detected at default I2C address. Please check wiring. Freezing."));
-    while (1);
-  }
+  // if (myGNSS.begin() == false) //Connect to the u-blox module using Wire port
+  // {
+  //   Serial.println(F("u-blox GNSS not detected at default I2C address. Please check wiring. Freezing."));
+  //   while (1);
+  // }
 
-  myGNSS.setI2COutput(COM_TYPE_UBX); //Set the I2C port to output UBX only (turn off NMEA noise)
-  myGNSS.saveConfigSelective(VAL_CFG_SUBSEC_IOPORT); //Save (only) the communications port settings to flash and BBR
-  Serial.println("GPS Configured");
+  // myGNSS.setI2COutput(COM_TYPE_UBX); //Set the I2C port to output UBX only (turn off NMEA noise)
+  // myGNSS.saveConfigSelective(VAL_CFG_SUBSEC_IOPORT); //Save (only) the communications port settings to flash and BBR
+  // Serial.println("GPS Configured");
   // GPS End // 
 
 
@@ -208,8 +209,16 @@ bool parseInput(String inputString){
     else if(Command == "MOVPWM"){
       Serial.println("moovin with da da pwmm");
 
-      // TD: Parse the PWM Values
-      // TD: Send PWM Values to the Motors
+      // parse leftPWM
+      int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
+      String leftPWMString = inputString.substring(indexOfSecondComma + 1, indexOfThirdComma); 
+
+      // parse rightPWM
+      int indexOfFourthComma = inputString.indexOf(',',indexOfThirdComma + 1); 
+      String rightPWMString = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma); 
+
+      moveMotorsForMOVPWM(leftPWMString.toInt(), leftPWMString.toInt());
+
     }
 
     // STARTUP
@@ -227,6 +236,12 @@ bool parseInput(String inputString){
     return false;
   }
 
+}
+
+void moveMotorsForMOVPWM(int leftPWM, int rightPWM){
+  Serial.println("Movin Via da PWM");
+  motor1.write(leftPWM);                 
+  motor2.write(rightPWM); 
 }
 
 void moveMotorsForMOV(String direction){
