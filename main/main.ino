@@ -125,10 +125,12 @@ void setupLoRa() {
 
     radio.setFrequency(433.0);
     radio.setBandwidth(125.0);
-    radio.setSpreadingFactor(12);
+    radio.setSpreadingFactor(8);
     radio.setCodingRate(6);
     radio.setSyncWord(0x12);
     radio.setOutputPower(17);
+
+    //radio.implicitHeader(255); //ONLY FOR SF6 (param is max packet size)
 
     radio.setPacketSentAction(setTransmissionFlag);
     radio.setPacketReceivedAction(setReceiverFlag);
@@ -333,10 +335,18 @@ void BotTask(void *pvParameters) {
   while (1) {
     if (xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
 
+      unsigned long receiveStart = millis();
+
       int state = radio.receive(receivedMessage);
+
+      unsigned long receiveTime = millis() - receiveStart;
+      Serial.print("LoRa Receive Time: ");
+      Serial.print(receiveTime);
+      Serial.println(" ms");
 
       if (state == RADIOLIB_ERR_NONE && receivedFlag) {
         Serial.println("Received: " + receivedMessage);
+        unsigned long sendStart = millis();
 
         if(parseInput(receivedMessage)){
           // Reset and setup trasmit setting
@@ -348,6 +358,11 @@ void BotTask(void *pvParameters) {
           payload = createPayload();
 
           int transmissionState = radio.transmit(payload);
+
+          unsigned long sendTime = millis() - sendStart;
+          Serial.print("LoRa Transmission Time: ");
+          Serial.print(sendTime);
+          Serial.println(" ms");
         }
 
         // Reset and setup receive setting
@@ -362,7 +377,7 @@ void BotTask(void *pvParameters) {
 
 String getGPS(){
   if(DEBUG){
-    Serial.println("Sampling Fake GPS Data");
+    //Serial.println("Sampling Fake GPS Data");
     long latReading = 1000;
     long lonReading = 1000;
 
@@ -371,7 +386,7 @@ String getGPS(){
     return returnString;    
   }
   else{
-    Serial.println("Sampling Real GPS Data");
+    //Serial.println("Sampling Real GPS Data");
       
     long latReading = myGNSS.getLatitude();
     long lonReading = myGNSS.getLongitude();
