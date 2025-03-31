@@ -67,10 +67,20 @@ TaskHandle_t BotTaskHandle = NULL;
 // LoRa end
 
 
-// GPS Start
+
+
 #include <Wire.h> //Needed for I2C to GNSS
 #include <SparkFun_u-blox_GNSS_v3.h> //http://librarymanager/All#SparkFun_u-blox_GNSS_v3
+#include "SparkFun_BNO08x_Arduino_Library.h"
 
+// IMU Start
+
+BNO08x imu;
+#define BNO08X_ADDR 0x4B
+
+// IMU END
+
+// GPS Start
 SFE_UBLOX_GNSS myGNSS;
 long lastTime = 0; //Simple local timer. Limits amount if I2C traffic to u-blox module.
 // GPS End
@@ -109,6 +119,19 @@ void setup() {
 
   // TD: BENJI
   // IMU SETUP START
+  if (imu.begin() == false) {
+    Serial.println("BNO08x not detected at default I2C address. Check your jumpers and the hookup guide. Freezing...");
+    while (1);
+  }
+  Serial.println("BNO08x found!");
+
+  if (imu.enableGeomagneticRotationVector() == true) {
+    Serial.println(F("Geomagnetic Rotation vector enabled"));
+    Serial.println(F("Output in form roll, pitch, yaw"));
+  } else {
+    Serial.println("Could not enable geomagnetic rotation vector");
+  }
+
   // IMU SETUP End
 
   // Create Tasks, 
@@ -215,6 +238,8 @@ void SensorTask(void *pvParameters){
     // local_GPS_Latitude = 100;
     // local_GPS_Longitude = 100;
     local_Compass_Heading = readIMU();
+    Serial.print("HEADING: ");
+    Serial.println(local_Compass_Heading);
 
     if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
     
@@ -527,8 +552,23 @@ long* getCurrentGPSPoints() {
 float readIMU(){
   float currentDegrees;
 
-  currentDegrees = 0;  // Change to actaully read the real compass value
+  if (imu.wasReset()) {
+    Serial.print("sensor was reset ");
+    if (imu.enableGeomagneticRotationVector() == true) {
+      Serial.println(F("Geomagnetic Rotation vector enabled"));
+      Serial.println(F("Output in form roll, pitch, yaw"));
+    } else {
+      Serial.println("Could not enable geomagnetic rotation vector");
+    }
+  }
 
+  if (imu.getSensorEvent() == true) {
+    if (imu.getSensorEventID() == SENSOR_REPORTID_GEOMAGNETIC_ROTATION_VECTOR) {
+      float yaw = (imu.getYaw()) * 180.0 / PI;
+      if (yaw < 0) yaw += 360.0;
+      currentDegrees = yaw;
+    }
+  }
   return currentDegrees;
 }
 
