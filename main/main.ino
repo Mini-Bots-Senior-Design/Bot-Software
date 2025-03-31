@@ -1,5 +1,21 @@
 // File to control all onboard software
 #include <ESP32Servo.h> 
+#include <math.h> // GPS Functions
+
+#include "LoRaBoards.h" // LoRa 
+#include <RadioLib.h>   // LoRa
+
+
+#define EARTH_RADIUS_FEET 20902230.0 // Earth's radius in feet      // GPS Functions
+#define RAD_TO_DEG (180.0 / M_PI) //    Convert radians to degrees  // GPS Functions
+
+// Pin configuration for T-Beam SX1278
+#define RADIO_CS_PIN 18
+#define RADIO_DIO0_PIN 26
+#define RADIO_RST_PIN 23
+#define RADIO_DIO1_PIN 33
+#define RADIO_DIO2_PIN 32  // Optional
+
 
 ///////////
 // Modes //
@@ -23,23 +39,22 @@ int motorpin2 = 2;      // GPIO pin used to connect the servo control (digital o
 
 const char* BOTID = "2";
 
-long lat = 0;
-long lon = 0;
+// Sensor Values
+long Current_GPS_Latitude = 0;
+long Current_GPS_Longitude = 0;
+float Current_Compass_Heading = 0;
+
+long Target_GPS_Latitude = 0;
+long Target_GPS_Longitude = 0;
+
+// State
+bool automaticMode = false;
 
 // Switch to get real value
 bool DEBUG = true;
 
-// LoRa start
-#include "LoRaBoards.h"
-#include <RadioLib.h>
 
-// Pin configuration for T-Beam SX1278
-#define RADIO_CS_PIN 18
-#define RADIO_DIO0_PIN 26
-#define RADIO_RST_PIN 23
-#define RADIO_DIO1_PIN 33
-#define RADIO_DIO2_PIN 32  // Optional
-
+// LoRa Start
 // Set up the LoRa module for SX1278
 SX1278 radio = new Module(RADIO_CS_PIN, RADIO_DIO0_PIN, RADIO_RST_PIN, RADIO_DIO1_PIN);
 
@@ -51,6 +66,7 @@ SemaphoreHandle_t xSemaphore;
 TaskHandle_t BotTaskHandle = NULL;
 // LoRa end
 
+
 // GPS Start
 #include <Wire.h> //Needed for I2C to GNSS
 #include <SparkFun_u-blox_GNSS_v3.h> //http://librarymanager/All#SparkFun_u-blox_GNSS_v3
@@ -58,6 +74,10 @@ TaskHandle_t BotTaskHandle = NULL;
 SFE_UBLOX_GNSS myGNSS;
 long lastTime = 0; //Simple local timer. Limits amount if I2C traffic to u-blox module.
 // GPS End
+
+// Mutexes to protect shared resources
+SemaphoreHandle_t xMutexSensor;
+SemaphoreHandle_t xMutexAutomatic;
 
 
 void setup() {
@@ -70,8 +90,28 @@ void setup() {
   motor1.attach(motorpin1, minUs, maxUs);   // attaches the servo on pin 18 to the servo object
   motor2.attach(motorpin2, minUs, maxUs);   // attaches the servo on pin 18 to the servo object
 
+  // GPS Start //
+  Serial.println("Configuring GPS....");
+
+  Wire.begin();
+  delay(1000);
+
+  if (myGNSS.begin() == false) //Connect to the u-blox module using Wire port
+  {
+    Serial.println(F("u-blox GNSS not detected at default I2C address. Please check wiring. Freezing."));
+    while (1);
+  }
+
+  myGNSS.setI2COutput(COM_TYPE_UBX); //Set the I2C port to output UBX only (turn off NMEA noise)
+  myGNSS.saveConfigSelective(VAL_CFG_SUBSEC_IOPORT); //Save (only) the communications port settings to flash and BBR
+  Serial.println("GPS Configured");
+  // GPS End // 
+
+  // TD: BENJI
+  // IMU SETUP START
+  // IMU SETUP End
+
   // Create Tasks, 
-  //xTaskCreate(task1, "task1", 1000, NULL,1,NULL);
 
   delay(1000); // short delay
 
@@ -87,32 +127,153 @@ void setup() {
   xSemaphore = xSemaphoreCreateBinary();
   xSemaphoreGive(xSemaphore);
 
+  // For sensors
+  xMutexSensor = xSemaphoreCreateMutex();
+  xMutexAutomatic = xSemaphoreCreateMutex();
+
+
   xTaskCreate(BotTask, "Bot Task", 2048, NULL, 1, NULL);
-  // LoRa Calibration End
-
-
-
-  // GPS Start //
-  // Serial.println("Configuring GPS....");
-
-  // Wire.begin();
-  // delay(1000);
-
-  // if (myGNSS.begin() == false) //Connect to the u-blox module using Wire port
-  // {
-  //   Serial.println(F("u-blox GNSS not detected at default I2C address. Please check wiring. Freezing."));
-  //   while (1);
-  // }
-
-  // myGNSS.setI2COutput(COM_TYPE_UBX); //Set the I2C port to output UBX only (turn off NMEA noise)
-  // myGNSS.saveConfigSelective(VAL_CFG_SUBSEC_IOPORT); //Save (only) the communications port settings to flash and BBR
-  // Serial.println("GPS Configured");
-  // GPS End // 
-
+  xTaskCreate(SensorTask, "Sensor Task", 2048, NULL, 1, NULL);
+  xTaskCreate(AutomaticTask, "Automatic Task", 2048, NULL, 1, NULL);
 
   Serial.println("Startup Completed");
 }
 
+// Reads the Serial Port
+void loop() {
+  String inputString = "";  // String to hold the incoming data
+
+  // Read bytes from the serial until a newline character is found
+  while (Serial.available() > 0) {
+
+    // TODO: Change this to read from LoRA, or have the option to...
+    char incomingByte = Serial.read();  // Read a byte from Serial
+
+    if (incomingByte == '\n') {
+
+      parseInput(inputString);
+    
+      inputString = "";// Clear the string for the next line
+    } else {
+      // Otherwise, add the byte to the string
+      inputString += incomingByte;
+    }
+    delay(100);
+  }
+}
+ 
+
+/////////////////
+// Tasks Start // 
+/////////////////
+
+// Bot Task: Listen for requests, then send ID when requested
+void BotTask(void *pvParameters) {
+
+  switchToReceiveMode();  // Start in receive mode
+  String receivedMessage;
+
+  while (1) {
+    if (xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
+      int state = radio.receive(receivedMessage);
+
+      if (state == RADIOLIB_ERR_NONE && receivedFlag) {
+        Serial.println("Received: " + receivedMessage);
+        unsigned long sendStart = millis();
+
+        if(parseInput(receivedMessage)){
+          // Reset and setup trasmit setting
+          transmittedFlag = false;
+          switchToTransmitMode();
+
+          // Setup Payload
+          payload = createPayload();
+
+          int transmissionState = radio.transmit(payload);
+        }
+
+        // Reset and setup receive setting
+        switchToReceiveMode();  
+        receivedFlag = false;
+      }
+      xSemaphoreGive(xSemaphore);
+      vTaskDelay(100 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
+    }
+  }
+}
+
+
+// This will sample the GPS and IMU Sensors and write them to global variables 
+void SensorTask(void *pvParameters){
+  long local_GPS_Latitude;
+  long local_GPS_Longitude;
+  float local_Compass_Heading;
+
+  while(1){
+    local_GPS_Latitude = myGNSS.getLatitude();
+    local_GPS_Longitude = myGNSS.getLongitude();
+    // local_GPS_Latitude = 100;
+    // local_GPS_Longitude = 100;
+    local_Compass_Heading = readIMU();
+
+    if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
+    
+      // Assign to Globals
+      Current_Compass_Heading = local_Compass_Heading; 
+      Current_GPS_Latitude = local_GPS_Latitude;
+      Current_GPS_Longitude = local_GPS_Longitude;
+
+      // Give the mutex back so other tasks can use it
+      xSemaphoreGive(xMutexSensor);
+    
+    }
+    else {
+      Serial.println("Failed to take mutex");
+    }
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
+  }
+}
+
+void AutomaticTask(void *pvParameters){
+  while(1){
+    if(getAutomaticMode()){
+      Serial.println("In Automatic Mode");
+
+
+        String gpsString = ""; // Debug
+        long* targetGPSData = getTargetGPSPoints();
+        long* currentGPSData = getCurrentGPSPoints();  
+        float compassData = getCurrentCompassAngle();
+
+        // DEBUG Print:
+        // Convert the longitude and latitude to a string and concatenate them
+        gpsString = "Longitude: " + String(currentGPSData[0]) + ", Latitude: " + String(currentGPSData[1]);
+        Serial.print("Current GPS/Compass: ");
+        Serial.print(gpsString);
+        Serial.print(" ,Compass: ");
+        Serial.println(String(compassData));
+
+        gpsString = "Longitude: " + String(targetGPSData[0]) + ", Latitude: " + String(targetGPSData[1]);
+        Serial.print("Target GPS: ");
+        Serial.println(gpsString);
+
+
+      // TD: make the calculations
+      // TD: move the motors
+    }
+    else{
+      Serial.println("Not In Automatic Mode");
+    }
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
+  }
+}
+
+
+///////////////
+// Tasks End // 
+///////////////
 void setupLoRa() {
     setupBoards();
 
@@ -136,28 +297,7 @@ void setupLoRa() {
     radio.setPacketReceivedAction(setReceiverFlag);
 }
 
-// Reads the Serial Port
-void loop() {
-    String inputString = "";  // String to hold the incoming data
 
-    // Read bytes from the serial until a newline character is found
-    while (Serial.available() > 0) {
-
-      // TODO: Change this to read from LoRA, or have the option to...
-      char incomingByte = Serial.read();  // Read a byte from Serial
-
-      if (incomingByte == '\n') {
-
-        parseInput(inputString);
-      
-        inputString = "";// Clear the string for the next line
-      } else {
-        // Otherwise, add the byte to the string
-        inputString += incomingByte;
-      }
-      delay(100);
-    }
-}
 
 
 /////////////////////////////////////////
@@ -185,11 +325,31 @@ bool parseInput(String inputString){
 
     // Extract Command
     String Command = inputString.substring(indexOfFirstComma + 1, indexOfSecondComma); 
-    // Serial.println("Command: " + Command);
+
+
+    if(Command == "MOVGPS"){
+
+      // Parse GPS Points
+      
+      // parse lat
+      int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
+      String latString = inputString.substring(indexOfSecondComma + 1, indexOfThirdComma); 
+
+      // parse lon
+      int indexOfFourthComma = inputString.indexOf(',',indexOfThirdComma + 1); 
+      String lonString = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma); 
+
+      // Set Target Points
+      setTargetGPSPoints(latString.toInt(), lonString.toInt());
+
+      setAutomaticModeTrue();
+    } else{
+      setAutomaticModeFalse();
+    }
 
     // MOV
     if(Command == "MOV"){
-      // Serial.println("moovin and grovin");
+      // Serial.println("MOV");
 
       // Extract Command
       int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
@@ -200,16 +360,9 @@ bool parseInput(String inputString){
       moveMotorsForMOV(Direction);
     }
 
-    // MOVGPS
-    else if(Command == "MOVGPS"){
-      // Serial.println("moovin with da gpss");
-
-      // TD: Parse the GPS Points
-    }
-
     // MOVPWM
-    else if(Command == "MOVPWM"){
-      Serial.println("moovin with da da pwmm");
+    if(Command == "MOVPWM"){
+      // Serial.println("MOVPWM");
 
       // parse leftPWM
       int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
@@ -223,20 +376,27 @@ bool parseInput(String inputString){
     }
 
     // STARTUP
-    else if(Command == "STARTUP"){
-      // Serial.println("startin this up");
-      motor1.write(90);                 
-      motor2.write(90);
+    if(Command == "STARTUP"){
+      // Serial.println("STARTUP");
+      stopMotors();
     }
-
-    // If the command is not anything is knows, it will send back status
+    
     return true;
   } 
   else{
     Serial.println("Incorrect BotID"); // DEBUG
     return false;
   }
+}
 
+
+///////////////////// 
+// Motor Functions // 
+/////////////////////
+
+void stopMotors(){
+  motor1.write(90);                 
+  motor2.write(90);
 }
 
 void moveMotorsForMOVPWM(int leftPWM, int rightPWM){
@@ -299,23 +459,10 @@ void switchToReceiveMode() {
     //Serial.println("Switching to Receive Mode");
 }
 
-String createPayload(){
-
-  String latLon = getGPS();
-
-  String createdString = "0," + String(BOTID) + "," + latLon;
-
-  Serial.print("Payload created: ");
-  Serial.println(createdString);
-  return createdString;
-}
-
 
 //////////////////////////
 // LoRa Setup Functions //
 //////////////////////////
-
-
 
 void handleTransmission(bool transmittedFlag, int transmissionState){
   if (transmittedFlag) {
@@ -325,78 +472,250 @@ void handleTransmission(bool transmittedFlag, int transmissionState){
   }
 }
 
-// Bot Task: Listen for requests, then send ID when requested
-void BotTask(void *pvParameters) {
 
-  switchToReceiveMode();  // Start in receive mode
-  String receivedMessage;
 
-  while (1) {
-    if (xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE) {
 
-      unsigned long receiveStart = millis();
 
-      int state = radio.receive(receivedMessage);
+/////////////////////////////////////
+// Current Compass and GPS Getters // 
+/////////////////////////////////////
 
-      unsigned long receiveTime = millis() - receiveStart;
-      Serial.print("LoRa Receive Time: ");
-      Serial.print(receiveTime);
-      Serial.println(" ms");
+// Get the current compass angle from the IMU
+float getCurrentCompassAngle(){
+   float currentCompassAngle;  // Static array to hold [longitude, latitude]
+  
+  // Take the mutex to gain exclusive access to the global variables
+  if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
+    
+    currentCompassAngle = Current_Compass_Heading; // Global assignment
 
-      if (state == RADIOLIB_ERR_NONE && receivedFlag) {
-        Serial.println("Received: " + receivedMessage);
-        unsigned long sendStart = millis();
+    // Give the mutex back so other tasks can use it
+    xSemaphoreGive(xMutexSensor);
+    
+  }
+  else {
+    Serial.println("Failed to take mutex");
+  }
+  
+  return currentCompassAngle;
+}
 
-        if(parseInput(receivedMessage)){
-          // Reset and setup trasmit setting
-          transmittedFlag = false;
-          switchToTransmitMode();
-          // delay(200); // Reduced delay from 1500ms to 200ms
+// Get the current GPS coordinates from globals
+long* getCurrentGPSPoints() {
+  static long currentGPSData[2];  // Static array to hold [longitude, latitude]
+  
+  // Take the mutex to gain exclusive access to the global variables
+  if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
+    
+    currentGPSData[0] = Current_GPS_Longitude;  // Longitude
+    currentGPSData[1] = Current_GPS_Latitude;   // Latitude 
 
-          // Setup Payload, later functionize this
-          payload = createPayload();
+    // Give the mutex back so other tasks can use it
+    xSemaphoreGive(xMutexSensor);
+    
+  }
+  else {
+    Serial.println("Failed to take mutex");
+  }
+  
+  // Return pointer to the gpsData array
+  return currentGPSData;
+}
 
-          int transmissionState = radio.transmit(payload);
+// This function reads the IMU's Compass
+// TD: BENJI
+float readIMU(){
+  float currentDegrees;
 
-          unsigned long sendTime = millis() - sendStart;
-          Serial.print("LoRa Transmission Time: ");
-          Serial.print(sendTime);
-          Serial.println(" ms");
-        }
+  currentDegrees = 0;  // Change to actaully read the real compass value
 
-        // Reset and setup receive setting
-        switchToReceiveMode();  
-        receivedFlag = false;
-      }
-      xSemaphoreGive(xSemaphore);
-      vTaskDelay(100 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
-    }
+  return currentDegrees;
+}
+
+
+
+//////////////////////////////
+// Payload Helper Functions //
+//////////////////////////////
+
+// Return a string
+String getGPS_String() {
+  long* gpsData = getCurrentGPSPoints();  // Call the readGPS() function to get the GPS data
+
+  // Convert the longitude and latitude to a string and concatenate them
+  String gpsString = "Longitude: " + String(gpsData[0]) + ", Latitude: " + String(gpsData[1]);
+
+  return gpsString;  // Return the formatted string
+}
+
+String createPayload(){
+
+  String latLon = getGPS_String();
+  String createdString = "0," + String(BOTID) + "," + latLon; // Why Zero? ohh zero is SBC
+
+  Serial.print("Payload created: ");
+  Serial.println(createdString);
+
+  return createdString;
+}
+
+
+////////////////////////////////////
+// Automatic Mode Setters/Getters //
+////////////////////////////////////
+
+bool getAutomaticMode(){
+  bool localAutomaticMode;
+
+  if (xSemaphoreTake(xMutexAutomatic, portMAX_DELAY) == pdTRUE) {
+    localAutomaticMode = automaticMode;
+
+    xSemaphoreGive(xMutexAutomatic);
+  }
+   else {
+    Serial.println("Failed to take mutex");
+  }
+
+  return localAutomaticMode;
+}
+
+void setAutomaticModeFalse(){
+  if (xSemaphoreTake(xMutexAutomatic, portMAX_DELAY) == pdTRUE) {
+    automaticMode = false;
+
+    xSemaphoreGive(xMutexAutomatic);
+  }
+   else {
+    Serial.println("Failed to take mutex");
   }
 }
 
-String getGPS(){
-  if(DEBUG){
-    //Serial.println("Sampling Fake GPS Data");
-    long latReading = 1000;
-    long lonReading = 1000;
+void setAutomaticModeTrue(){
+  if (xSemaphoreTake(xMutexAutomatic, portMAX_DELAY) == pdTRUE) {
+    automaticMode = true;
 
-    String returnString = String(latReading) + "," + String(lonReading);
-    vTaskDelay(10);
-    return returnString;    
+    xSemaphoreGive(xMutexAutomatic);
   }
-  else{
-    //Serial.println("Sampling Real GPS Data");
-      
-    long latReading = myGNSS.getLatitude();
-    long lonReading = myGNSS.getLongitude();
-
-    String returnString = String(latReading) + "," + String(lonReading);
-
-    return returnString;
-}
+   else {
+    Serial.println("Failed to take mutex");
+  }
 }
 
-// {0,BOTID, LAT, LON}
+
+////////////////////////////////
+// Target GPS Setters/Getters //
+////////////////////////////////
+void setTargetGPSPoints(long lat, long lon){
+    // Take the mutex to gain exclusive access to the global variables
+  if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
+    
+    Target_GPS_Longitude = lon;  // Longitude
+    Target_GPS_Latitude = lat;   // Latitude 
+
+    // Give the mutex back so other tasks can use it
+    xSemaphoreGive(xMutexSensor);
+    
+  }
+  else {
+    Serial.println("Failed to take mutex");
+  }
+}
+
+
+long* getTargetGPSPoints() {
+  static long targetGPSData[2];  // Static array to hold [longitude, latitude]
+  
+  // Take the mutex to gain exclusive access to the global variables
+  if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
+    
+    targetGPSData[0] = Target_GPS_Longitude;  // Longitude
+    targetGPSData[1] = Target_GPS_Latitude;   // Latitude 
+
+    // Give the mutex back so other tasks can use it
+    xSemaphoreGive(xMutexSensor);
+    
+  }
+  else {
+    Serial.println("Failed to take mutex");
+  }
+  
+  // Return pointer to the gpsData array
+  return targetGPSData;
+}
+
+
+
+
+
+
+// 
+// GPS Helper Fuctions //
+//
+
+// Function to convert degrees * 10^-7 to decimal degrees
+double convertToDecimal(long value) {
+    return value / 10000000.0;
+}
+
+// Haversine formula to compute distance in feet
+double haversineDistance(long lat1, long lon1, long lat2, long lon2) {
+  // Convert coordinates to decimal degrees
+  double lat1_d = convertToDecimal(lat1);
+  double lon1_d = convertToDecimal(lon1);
+  double lat2_d = convertToDecimal(lat2);
+  double lon2_d = convertToDecimal(lon2);
+
+  // Convert decimal degrees to radians
+  double lat1_rad = lat1_d * M_PI / 180.0;
+  double lon1_rad = lon1_d * M_PI / 180.0;
+  double lat2_rad = lat2_d * M_PI / 180.0;
+  double lon2_rad = lon2_d * M_PI / 180.0;
+
+  // Haversine formula
+  double dlat = lat2_rad - lat1_rad;
+  double dlon = lon2_rad - lon1_rad;
+  
+  double a = pow(sin(dlat / 2), 2) + cos(lat1_rad) * cos(lat2_rad) * pow(sin(dlon / 2), 2);
+  double c = 2 * atan2(sqrt(a), sqrt(1 - a));
+
+  return EARTH_RADIUS_FEET * c; // Distance in feet
+}
+
+
+// Calculate the initial bearing (angle) between two GPS points
+double calculateBearing(long lat1, long lon1, long lat2, long lon2) {
+  // Convert to decimal degrees
+  double lat1_d = convertToDecimal(lat1);
+  double lon1_d = convertToDecimal(lon1);
+  double lat2_d = convertToDecimal(lat2);
+  double lon2_d = convertToDecimal(lon2);
+
+  // Convert to radians
+  double lat1_rad = lat1_d * M_PI / 180.0;
+  double lon1_rad = lon1_d * M_PI / 180.0;
+  double lat2_rad = lat2_d * M_PI / 180.0;
+  double lon2_rad = lon2_d * M_PI / 180.0;
+
+  // Compute differences
+  double deltaLon = lon2_rad - lon1_rad;
+
+  // Bearing formula
+  double y = sin(deltaLon) * cos(lat2_rad);
+  double x = cos(lat1_rad) * sin(lat2_rad) - sin(lat1_rad) * cos(lat2_rad) * cos(deltaLon);
+  double theta = atan2(y, x); // Angle in radians
+
+  // Convert to degrees
+  double bearing = theta * RAD_TO_DEG;
+
+  // Normalize to 0-360 degrees
+  if (bearing < 0) {
+      bearing += 360.0;
+  }
+
+  return bearing;
+}
+
+
 
 
 
