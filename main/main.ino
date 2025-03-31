@@ -232,21 +232,26 @@ void SensorTask(void *pvParameters){
   long local_GPS_Longitude;
   float local_Compass_Heading;
 
+  int cycleNumber = 1;
+
   while(1){
-    local_GPS_Latitude = myGNSS.getLatitude();
-    local_GPS_Longitude = myGNSS.getLongitude();
+    if (cycleNumber == 10) {
+      local_GPS_Latitude = myGNSS.getLatitude();
+      local_GPS_Longitude = myGNSS.getLongitude();
+    }
     // local_GPS_Latitude = 100;
     // local_GPS_Longitude = 100;
     local_Compass_Heading = readIMU();
-    Serial.print("HEADING: ");
     Serial.println(local_Compass_Heading);
 
     if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
     
       // Assign to Globals
+      if (cycleNumber == 10) {
+        Current_GPS_Latitude = local_GPS_Latitude;
+        Current_GPS_Longitude = local_GPS_Longitude;
+      }
       Current_Compass_Heading = local_Compass_Heading; 
-      Current_GPS_Latitude = local_GPS_Latitude;
-      Current_GPS_Longitude = local_GPS_Longitude;
 
       // Give the mutex back so other tasks can use it
       xSemaphoreGive(xMutexSensor);
@@ -256,7 +261,13 @@ void SensorTask(void *pvParameters){
       Serial.println("Failed to take mutex");
     }
 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
+    if (cycleNumber == 10) {
+      cycleNumber = 1;
+    }
+    else {
+      cycleNumber++;
+    }
+    vTaskDelay(25 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
 }
 
@@ -264,24 +275,33 @@ void AutomaticTask(void *pvParameters){
   while(1){
     if(getAutomaticMode()){
       Serial.println("In Automatic Mode");
+      String gpsString = ""; // Debug
+      long currentLat;
+      long currentLon;
+      long targetLat;
+      long targetLon;
+      float currentCompass;
 
+      if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
+        targetLat = Target_GPS_Latitude;
+        targetLon = Target_GPS_Longitude;
+        currentLat = Current_GPS_Latitude;
+        currentLon = Current_GPS_Longitude;
+        currentCompass = Current_Compass_Heading;
+        xSemaphoreGive(xMutexSensor);
+      }
 
-        String gpsString = ""; // Debug
-        long* targetGPSData = getTargetGPSPoints();
-        long* currentGPSData = getCurrentGPSPoints();  
-        float compassData = getCurrentCompassAngle();
+      // DEBUG Print:
+      // Convert the longitude and latitude to a string and concatenate them
+      gpsString = "Longitude: " + String(currentLon) + ", Latitude: " + String(currentLat);
+      Serial.print("Current GPS/Compass: ");
+      Serial.print(gpsString);
+      Serial.print(" ,Compass: ");
+      Serial.println(String(currentCompass));
 
-        // DEBUG Print:
-        // Convert the longitude and latitude to a string and concatenate them
-        gpsString = "Longitude: " + String(currentGPSData[0]) + ", Latitude: " + String(currentGPSData[1]);
-        Serial.print("Current GPS/Compass: ");
-        Serial.print(gpsString);
-        Serial.print(" ,Compass: ");
-        Serial.println(String(compassData));
-
-        gpsString = "Longitude: " + String(targetGPSData[0]) + ", Latitude: " + String(targetGPSData[1]);
-        Serial.print("Target GPS: ");
-        Serial.println(gpsString);
+      gpsString = "Longitude: " + String(targetLon) + ", Latitude: " + String(targetLat);
+      Serial.print("Target GPS: ");
+      Serial.println(gpsString);
 
 
       // TD: make the calculations
@@ -352,7 +372,7 @@ bool parseInput(String inputString){
     String Command = inputString.substring(indexOfFirstComma + 1, indexOfSecondComma); 
 
 
-    if(Command == "MOVGPS"){
+    if(Command == "MOVAUTO"){
 
       // Parse GPS Points
       
@@ -497,56 +517,6 @@ void handleTransmission(bool transmittedFlag, int transmissionState){
   }
 }
 
-
-
-
-
-/////////////////////////////////////
-// Current Compass and GPS Getters // 
-/////////////////////////////////////
-
-// Get the current compass angle from the IMU
-float getCurrentCompassAngle(){
-   float currentCompassAngle;  // Static array to hold [longitude, latitude]
-  
-  // Take the mutex to gain exclusive access to the global variables
-  if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
-    
-    currentCompassAngle = Current_Compass_Heading; // Global assignment
-
-    // Give the mutex back so other tasks can use it
-    xSemaphoreGive(xMutexSensor);
-    
-  }
-  else {
-    Serial.println("Failed to take mutex");
-  }
-  
-  return currentCompassAngle;
-}
-
-// Get the current GPS coordinates from globals
-long* getCurrentGPSPoints() {
-  static long currentGPSData[2];  // Static array to hold [longitude, latitude]
-  
-  // Take the mutex to gain exclusive access to the global variables
-  if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
-    
-    currentGPSData[0] = Current_GPS_Longitude;  // Longitude
-    currentGPSData[1] = Current_GPS_Latitude;   // Latitude 
-
-    // Give the mutex back so other tasks can use it
-    xSemaphoreGive(xMutexSensor);
-    
-  }
-  else {
-    Serial.println("Failed to take mutex");
-  }
-  
-  // Return pointer to the gpsData array
-  return currentGPSData;
-}
-
 // This function reads the IMU's Compass
 // TD: BENJI
 float readIMU(){
@@ -580,10 +550,17 @@ float readIMU(){
 
 // Return a string
 String getGPS_String() {
-  long* gpsData = getCurrentGPSPoints();  // Call the readGPS() function to get the GPS data
+  long currentLon;
+  long currentLat;
+
+  if (xSemaphoreTake(xMutexAutomatic, portMAX_DELAY) == pdTRUE) {
+    currentLon = Current_GPS_Longitude;
+    currentLat = Current_GPS_Latitude;
+    xSemaphoreGive(xMutexAutomatic);
+  }
 
   // Convert the longitude and latitude to a string and concatenate them
-  String gpsString = "Longitude: " + String(gpsData[0]) + ", Latitude: " + String(gpsData[1]);
+  String gpsString = "Longitude: " + String(currentLon) + ", Latitude: " + String(currentLat);
 
   return gpsString;  // Return the formatted string
 }
@@ -660,30 +637,6 @@ void setTargetGPSPoints(long lat, long lon){
     Serial.println("Failed to take mutex");
   }
 }
-
-
-long* getTargetGPSPoints() {
-  static long targetGPSData[2];  // Static array to hold [longitude, latitude]
-  
-  // Take the mutex to gain exclusive access to the global variables
-  if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
-    
-    targetGPSData[0] = Target_GPS_Longitude;  // Longitude
-    targetGPSData[1] = Target_GPS_Latitude;   // Latitude 
-
-    // Give the mutex back so other tasks can use it
-    xSemaphoreGive(xMutexSensor);
-    
-  }
-  else {
-    Serial.println("Failed to take mutex");
-  }
-  
-  // Return pointer to the gpsData array
-  return targetGPSData;
-}
-
-
 
 
 
