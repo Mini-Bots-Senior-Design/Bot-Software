@@ -42,7 +42,7 @@ const char* BOTID = "2";
 // Sensor Values
 long Current_GPS_Latitude = 0;
 long Current_GPS_Longitude = 0;
-float Current_Compass_Heading = 0;
+//float Current_Compass_Heading = 0;
 
 long Target_GPS_Latitude = 0;
 long Target_GPS_Longitude = 0;
@@ -75,8 +75,8 @@ TaskHandle_t BotTaskHandle = NULL;
 
 // IMU Start
 
-BNO08x imu;
-#define BNO08X_ADDR 0x4B
+// BNO08x imu;
+// #define BNO08X_ADDR 0x4B
 
 // IMU END
 
@@ -119,18 +119,18 @@ void setup() {
 
   // TD: BENJI
   // IMU SETUP START
-  if (imu.begin() == false) {
-    Serial.println("BNO08x not detected at default I2C address. Check your jumpers and the hookup guide. Freezing...");
-    while (1);
-  }
-  Serial.println("BNO08x found!");
+  // if (imu.begin() == false) {
+  //   Serial.println("BNO08x not detected at default I2C address. Check your jumpers and the hookup guide. Freezing...");
+  //   while (1);
+  // }
+  // Serial.println("BNO08x found!");
 
-  if (imu.enableGeomagneticRotationVector() == true) {
-    Serial.println(F("Geomagnetic Rotation vector enabled"));
-    Serial.println(F("Output in form roll, pitch, yaw"));
-  } else {
-    Serial.println("Could not enable geomagnetic rotation vector");
-  }
+  // if (imu.enableGeomagneticRotationVector() == true) {
+  //   Serial.println(F("Geomagnetic Rotation vector enabled"));
+  //   Serial.println(F("Output in form roll, pitch, yaw"));
+  // } else {
+  //   Serial.println("Could not enable geomagnetic rotation vector");
+  // }
 
   // IMU SETUP End
 
@@ -230,28 +230,31 @@ void BotTask(void *pvParameters) {
 void SensorTask(void *pvParameters){
   long local_GPS_Latitude;
   long local_GPS_Longitude;
-  float local_Compass_Heading;
+  //float local_Compass_Heading;
 
   int cycleNumber = 1;
 
   while(1){
-    if (cycleNumber == 10) {
+    if (cycleNumber == 5) {
       local_GPS_Latitude = myGNSS.getLatitude();
       local_GPS_Longitude = myGNSS.getLongitude();
+
+      Serial.print(local_GPS_Latitude);
+      Serial.print(", ");
+      Serial.println(local_GPS_Longitude);
     }
     // local_GPS_Latitude = 100;
     // local_GPS_Longitude = 100;
-    local_Compass_Heading = readIMU();
-    Serial.println(local_Compass_Heading);
+    //local_Compass_Heading = readIMU();
 
     if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
     
       // Assign to Globals
-      if (cycleNumber == 10) {
+      if (cycleNumber == 5) {
         Current_GPS_Latitude = local_GPS_Latitude;
         Current_GPS_Longitude = local_GPS_Longitude;
       }
-      Current_Compass_Heading = local_Compass_Heading; 
+      //Current_Compass_Heading = local_Compass_Heading; 
 
       // Give the mutex back so other tasks can use it
       xSemaphoreGive(xMutexSensor);
@@ -261,12 +264,12 @@ void SensorTask(void *pvParameters){
       Serial.println("Failed to take mutex");
     }
 
-    if (cycleNumber == 10) {
-      cycleNumber = 1;
-    }
-    else {
-      cycleNumber++;
-    }
+    // if (cycleNumber == 10) {
+    //   cycleNumber = 1;
+    // }
+    // else {
+    //   cycleNumber++;
+    // }
     vTaskDelay(25 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
 }
@@ -280,24 +283,24 @@ void AutomaticTask(void *pvParameters){
       long currentLon;
       long targetLat;
       long targetLon;
-      float currentCompass;
+      //float currentCompass;
 
       if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
         targetLat = Target_GPS_Latitude;
         targetLon = Target_GPS_Longitude;
         currentLat = Current_GPS_Latitude;
         currentLon = Current_GPS_Longitude;
-        currentCompass = Current_Compass_Heading;
+        //currentCompass = Current_Compass_Heading;
         xSemaphoreGive(xMutexSensor);
       }
 
       // DEBUG Print:
       // Convert the longitude and latitude to a string and concatenate them
-      gpsString = "Longitude: " + String(currentLon) + ", Latitude: " + String(currentLat);
+      gpsString = String(currentLon) + "," + String(currentLat);
       Serial.print("Current GPS/Compass: ");
       Serial.print(gpsString);
-      Serial.print(" ,Compass: ");
-      Serial.println(String(currentCompass));
+      // Serial.print(" ,Compass: ");
+      // Serial.println(String(currentCompass));
 
       gpsString = "Longitude: " + String(targetLon) + ", Latitude: " + String(targetLat);
       Serial.print("Target GPS: ");
@@ -417,7 +420,7 @@ bool parseInput(String inputString){
       int indexOfFourthComma = inputString.indexOf(',',indexOfThirdComma + 1); 
       String rightPWMString = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma); 
 
-      moveMotorsForMOVPWM(leftPWMString.toInt(), leftPWMString.toInt());
+      moveMotorsForMOVPWM(leftPWMString.toInt(), rightPWMString.toInt());
     }
 
     // STARTUP
@@ -522,23 +525,23 @@ void handleTransmission(bool transmittedFlag, int transmissionState){
 float readIMU(){
   float currentDegrees;
 
-  if (imu.wasReset()) {
-    Serial.print("sensor was reset ");
-    if (imu.enableGeomagneticRotationVector() == true) {
-      Serial.println(F("Geomagnetic Rotation vector enabled"));
-      Serial.println(F("Output in form roll, pitch, yaw"));
-    } else {
-      Serial.println("Could not enable geomagnetic rotation vector");
-    }
-  }
+  // if (imu.wasReset()) {
+  //   Serial.print("sensor was reset ");
+  //   if (imu.enableGeomagneticRotationVector() == true) {
+  //     Serial.println(F("Geomagnetic Rotation vector enabled"));
+  //     Serial.println(F("Output in form roll, pitch, yaw"));
+  //   } else {
+  //     Serial.println("Could not enable geomagnetic rotation vector");
+  //   }
+  // }
 
-  if (imu.getSensorEvent() == true) {
-    if (imu.getSensorEventID() == SENSOR_REPORTID_GEOMAGNETIC_ROTATION_VECTOR) {
-      float yaw = (imu.getYaw()) * 180.0 / PI;
-      if (yaw < 0) yaw += 360.0;
-      currentDegrees = yaw;
-    }
-  }
+  // if (imu.getSensorEvent() == true) {
+  //   if (imu.getSensorEventID() == SENSOR_REPORTID_GEOMAGNETIC_ROTATION_VECTOR) {
+  //     float yaw = (imu.getYaw()) * 180.0 / PI;
+  //     if (yaw < 0) yaw += 360.0;
+  //     currentDegrees = yaw;
+  //   }
+  // }
   return currentDegrees;
 }
 
@@ -560,8 +563,8 @@ String getGPS_String() {
   }
 
   // Convert the longitude and latitude to a string and concatenate them
-  String gpsString = "Longitude: " + String(currentLon) + ", Latitude: " + String(currentLat);
-
+  String gpsString = String(currentLat) + "," + String(currentLon);
+  Serial.println(gpsString);
   return gpsString;  // Return the formatted string
 }
 
