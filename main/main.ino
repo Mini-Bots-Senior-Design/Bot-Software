@@ -37,7 +37,7 @@ int frequency = 50; // 50Hz
 int motorpin1 = 13;      // GPIO pin used to connect the servo control (digital out) 
 int motorpin2 = 2;      // GPIO pin used to connect the servo control (digital out)  
 
-const char* BOTID = "2";
+const char* BOTID = "1";
 
 // Sensor Values
 long Current_GPS_Latitude = 0;
@@ -235,14 +235,14 @@ void SensorTask(void *pvParameters){
   int cycleNumber = 1;
 
   while(1){
-    if (cycleNumber == 5) {
+    //if (cycleNumber == 5) {
       local_GPS_Latitude = myGNSS.getLatitude();
       local_GPS_Longitude = myGNSS.getLongitude();
 
       Serial.print(local_GPS_Latitude);
       Serial.print(", ");
       Serial.println(local_GPS_Longitude);
-    }
+    //}
     // local_GPS_Latitude = 100;
     // local_GPS_Longitude = 100;
     //local_Compass_Heading = readIMU();
@@ -250,10 +250,10 @@ void SensorTask(void *pvParameters){
     if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
     
       // Assign to Globals
-      if (cycleNumber == 5) {
+      //if (cycleNumber == 5) {
         Current_GPS_Latitude = local_GPS_Latitude;
         Current_GPS_Longitude = local_GPS_Longitude;
-      }
+      //}
       //Current_Compass_Heading = local_Compass_Heading; 
 
       // Give the mutex back so other tasks can use it
