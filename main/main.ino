@@ -46,24 +46,27 @@ public:
        _botID("0"),
       _currentGPSLatitude(0),
       _currentGPSLongitude(0),
-      _compassHeading(0.0f),
       _targetGPSLatitude(0),
       _targetGPSLongitude(0),
+      _currentCompassHeading(0.0f),
+      _targetCompassHeading(0.0f),
       _batteryLevel(0.0f),
-      _automaticMode(false)
+      _automaticMode(false),
+      _moveMode(false),
+      _speed(0)
   {
-    _xMutexSensor_IMU = xSemaphoreCreateMutex();
     _xMutexSensor_Current_GPS = xSemaphoreCreateMutex();
     _xMutexSensor_Target_GPS = xSemaphoreCreateMutex();
-    _xMutexAutomatic = xSemaphoreCreateMutex();
+
+    _xMutexSensor_Current_IMU = xSemaphoreCreateMutex();
+    _xMutexSensor_Target_IMU = xSemaphoreCreateMutex();
+
     _xMutexSensor_BatterySensor = xSemaphoreCreateMutex();
 
-    if (_xMutexSensor_IMU == NULL) {Serial.println("Failed to create IMU mutex");}
-    if (_xMutexSensor_Current_GPS == NULL) {Serial.println("Failed to create current GPS mutex");}
-    if (_xMutexSensor_Target_GPS == NULL) {Serial.println("Failed to create target GPS mutex");}
-    if (_xMutexAutomatic == NULL) {Serial.println("Failed to create target automatic mutex");}
-    if (_xMutexSensor_BatterySensor == NULL) {Serial.println("Failed to create target automatic mutex");}
+    _xMutexAutomatic = xSemaphoreCreateMutex();
+    _xMutexMove = xSemaphoreCreateMutex();
 
+    _xMutexSpeed = xSemaphoreCreateMutex();
   }
   
   // 
@@ -75,9 +78,9 @@ public:
   // }
   
   // Getter for BotID (read-only)
-    const char* getBotID() const {
-        return _botID;
-    }
+  const char* getBotID() const {
+      return _botID;
+  }
 
   void setBotID(const char* botID) {
     strncpy(_botID, botID, sizeof(_botID) - 1);  // Copy safely to avoid overflow
@@ -149,49 +152,70 @@ public:
     }
   }
 
-  String getGPS_String() {
-    long currentLon;
-    long currentLat;
-
-    getCurrentGPS(currentLon, currentLat);
-    String gpsString = String(currentLat) + "," + String(currentLon);
-
-    return gpsString;  // Return the formatted string
-  }
-  
-
   //////////////////////////////////////////////////////
-  // IMU: Setters and Getters for the Compass Heading //
+  // CURRENT IMU: Setters and Getters for the Compass Heading //
   //////////////////////////////////////////////////////
   float readIMU_mock() {
     float heading;
 
-    if(xSemaphoreTake(_xMutexSensor_IMU, portMAX_DELAY) == pdTRUE) {
-      heading = 2.2; // change to be real
-      xSemaphoreGive(_xMutexSensor_IMU);
+    if(xSemaphoreTake(_xMutexSensor_Current_IMU, portMAX_DELAY) == pdTRUE) {
+      heading = 2.2;
+      xSemaphoreGive(_xMutexSensor_Current_IMU);
     }
     return heading;
   }
 
-  void setHeading(float heading) {
-    if(xSemaphoreTake(_xMutexSensor_IMU, portMAX_DELAY) == pdTRUE) {
-      _compassHeading = heading;
-      xSemaphoreGive(_xMutexSensor_IMU);
+  // TD Implement Later
+  float readIMU() {
+    float heading;
+
+    if(xSemaphoreTake(_xMutexSensor_Current_IMU, portMAX_DELAY) == pdTRUE) {
+      heading = 2.2; // change to be real
+      xSemaphoreGive(_xMutexSensor_Current_IMU);
+    }
+    return heading;
+  }
+
+  void setCurrentHeading(float heading) {
+    if(xSemaphoreTake(_xMutexSensor_Current_IMU, portMAX_DELAY) == pdTRUE) {
+      _currentCompassHeading = heading;
+      xSemaphoreGive(_xMutexSensor_Current_IMU);
     }
   }
   
-  float getHeading() {
+  float getCurrentHeading() {
     float heading = 0.0f;
-    if(xSemaphoreTake(_xMutexSensor_IMU, portMAX_DELAY) == pdTRUE) {
-      heading = _compassHeading;
-      xSemaphoreGive(_xMutexSensor_IMU);
+    if(xSemaphoreTake(_xMutexSensor_Current_IMU, portMAX_DELAY) == pdTRUE) {
+      heading = _currentCompassHeading;
+      xSemaphoreGive(_xMutexSensor_Current_IMU);
     }
     return heading;
   }
+
+
+  /////////////////////////////////////////
+  // TARGET Compass: Setters and Getters //
+  /////////////////////////////////////////
+  void setTargetHeading(float heading) {
+    if(xSemaphoreTake(_xMutexSensor_Target_IMU, portMAX_DELAY) == pdTRUE) {
+      _targetCompassHeading = heading;
+      xSemaphoreGive(_xMutexSensor_Target_IMU);
+    }
+  }
+  
+  float getTargetHeading() {
+    float heading = 0.0f;
+    if(xSemaphoreTake(_xMutexSensor_Target_IMU, portMAX_DELAY) == pdTRUE) {
+      heading = _targetCompassHeading;
+      xSemaphoreGive(_xMutexSensor_Target_IMU);
+    }
+    return heading;
+  }
+
+
   /////////////////////////////////////////
   // Battery Sensor: Setters and Getters //
   /////////////////////////////////////////
-
   float readBatterySensor_mock() {
     float batteryLevel;
     if(xSemaphoreTake(_xMutexSensor_BatterySensor, portMAX_DELAY) == pdTRUE) {
@@ -217,6 +241,27 @@ public:
     return batteryLevel;
   }
 
+
+  /////////////////////////////////////
+  // SPEED: Setters and Getters //
+  /////////////////////////////////////
+  void setSpeed(int speed) {
+    if(xSemaphoreTake(_xMutexSpeed, portMAX_DELAY) == pdTRUE) {
+      _speed = speed;
+      xSemaphoreGive(_xMutexSensor_Target_GPS);
+    }
+  }
+  
+  int getSpeed() {
+    int speed;
+    if(xSemaphoreTake(_xMutexSpeed, portMAX_DELAY) == pdTRUE) {
+      speed = _speed;
+      xSemaphoreGive(_xMutexSpeed);
+    }
+    return speed;
+  }
+
+
   ///////////////////////////
   // Change Automatic Mode //
   ///////////////////////////
@@ -236,6 +281,27 @@ public:
     }
   }
 
+
+  //////////////////////
+  // Change Move Mode //
+  //////////////////////
+  bool getMoveMode() {
+    bool moveMode;
+    if(xSemaphoreTake(_xMutexMove, portMAX_DELAY) == pdTRUE) {
+      moveMode = _moveMode;
+      xSemaphoreGive(_xMutexMove);
+    }
+    return moveMode;
+  }
+  
+  void setMoveMode(bool moveMode) {
+    if(xSemaphoreTake(_xMutexMove, portMAX_DELAY) == pdTRUE) {
+      _moveMode = moveMode;
+      xSemaphoreGive(_xMutexMove);
+    }
+  }
+
+
   ////////////////////////////////
   // Parsing and Format Methods //
   ////////////////////////////////
@@ -244,28 +310,45 @@ public:
     long currentGPSLongitude;
     long targetGPSLatitude;
     long targetGPSLongitude;
-    float compassHeading;
+
+    float currentHeading;
+    float targetHeading;
+
     float batteryLevel;
 
-    // get target gps data
-    getTargetGPS(targetGPSLatitude, targetGPSLongitude);
+    int speed; // add speed
 
-    // get current gps data
+    // get target gps location
+    getTargetGPS(targetGPSLatitude, targetGPSLongitude);
     getCurrentGPS(currentGPSLatitude, currentGPSLongitude);
 
-    // get compass data
-    compassHeading = getHeading();
+    currentHeading = getCurrentHeading();
+    targetHeading = getTargetHeading();
 
-    // get battery level data
     batteryLevel = getBatteryLevel();
 
-    String data = "Target: " + String(targetGPSLatitude) + "," + String(targetGPSLongitude) +
-               " | Current: " + String(currentGPSLatitude) + "," + String(currentGPSLongitude) +
-               " | Heading: " + String(compassHeading) +
+    speed = getSpeed();
+
+
+    String data = "Target_GPS: " + String(targetGPSLatitude) + "," + String(targetGPSLongitude) +
+               " | Current_GPS: " + String(currentGPSLatitude) + "," + String(currentGPSLongitude) +
+               " | Current_Heading: " + String(currentHeading) +
+               " | Target_Heading: " + String(targetHeading) +
+               " | Target_Speed: " + String(speed) +
                " | Battery Level: " + String(batteryLevel);
   
     return data;
-  }   
+  } 
+
+  String getGPS_String() {
+    long currentLon;
+    long currentLat;
+
+    getCurrentGPS(currentLon, currentLat);
+    String gpsString = String(currentLat) + "," + String(currentLon);
+
+    return gpsString;  // Return the formatted string
+  }  
 
   // TD, Add battery sensor level
   String createPayload(){
@@ -276,30 +359,40 @@ public:
     return createdString;
   }
 
+
+
 private:
   char _botID[20];
 
   // Sensor values
   long _currentGPSLatitude;
   long _currentGPSLongitude;
-  float _compassHeading;
   long _targetGPSLatitude;
   long _targetGPSLongitude;
+
+  float _currentCompassHeading;
+  float _targetCompassHeading;
+
   float _batteryLevel;
 
-  int _gps_period;
-  int _imu_period;
-  int _battery_sensor_period;
+  bool _automaticMode;
+  bool _moveMode;
 
-  bool _automaticMode = false;
+  int _speed;
 
   // Mutex to protect sensor data access
-  SemaphoreHandle_t _xMutexSensor_IMU;
   SemaphoreHandle_t _xMutexSensor_Current_GPS;
   SemaphoreHandle_t _xMutexSensor_Target_GPS;
+
+  SemaphoreHandle_t _xMutexSensor_Current_IMU;
+  SemaphoreHandle_t _xMutexSensor_Target_IMU;
+
   SemaphoreHandle_t _xMutexSensor_BatterySensor;
 
   SemaphoreHandle_t _xMutexAutomatic;
+  SemaphoreHandle_t _xMutexMove;
+
+  SemaphoreHandle_t _xMutexSpeed; 
 };
 
 
@@ -382,7 +475,7 @@ void setup() {
   xTaskCreate(BotTask, "Bot Task", 2048, NULL, 1, NULL);
   xTaskCreate(IMUTask, "IMU Task", 2048, NULL, 1, NULL);
   xTaskCreate(GPSTask, "GPS Task", 2048, NULL, 1, NULL);
-  xTaskCreate(BSTask, "Battery Sensor Task", 2048, NULL, 1, NULL);
+  xTaskCreate(BatterySensorTask, "Battery Sensor Task", 2048, NULL, 1, NULL);
 
   xTaskCreate(AutomaticTask, "Automatic Task", 2048, NULL, 1, NULL);
 
@@ -456,6 +549,7 @@ void BotTask(void *pvParameters) {
 // Automatic Task: Read Sensor Data and Move Bot
 void AutomaticTask(void *pvParameters){
   while(1){
+    // Waypoint Algorithim
     if(bot.getAutomaticMode()){
       Serial.println("In Automatic Mode");
 
@@ -465,7 +559,9 @@ void AutomaticTask(void *pvParameters){
       long targetLon; 
       long currentLat;
       long currentLon;
-      float currentCompass;
+
+      float currentHeading;
+      float targetHeading; // to implement
 
       // get current gps data
       bot.getCurrentGPS(currentLat, currentLon);
@@ -474,13 +570,26 @@ void AutomaticTask(void *pvParameters){
       bot.getTargetGPS(targetLat, targetLon);
 
       // get current imu data
-      currentCompass = bot.getHeading();
+      currentHeading = bot.getCurrentHeading();
 
-      Serial.println(bot.getAllData()); // debug or can make a function that compiles a bunch of variables....
+      // TD: add the algorithim lmao
+      // Right now.. just printing all the vars
+      Serial.println(bot.getAllData()); 
     }
+
+    // Direction Algorithim
+    else if(bot.getMoveMode()){
+      Serial.println("In Compass Lock Mode");
+
+      // TD: Add the algo lol
+      // Right now... just print the vars
+      // Serial.println(bot.getAllData()); 
+    } 
     else{
-      Serial.println("Not In Automatic Mode");
+      Serial.println("Not In Any Auto Mode");
     }
+
+    // Compass Deviating Algo
 
     vTaskDelay(1000 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
@@ -512,13 +621,13 @@ void IMUTask(void *pvParameters){
 
   while(1){
     local_Compass_Heading = bot.readIMU_mock(); // read the values, passed by refrence
-    bot.setHeading(local_Compass_Heading); // store them in global variables
+    bot.setCurrentHeading(local_Compass_Heading); // store them in global variables
   
     vTaskDelay(IMU_Period / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
 }
 
-void BSTask(void *pvParameters){
+void BatterySensorTask(void *pvParameters){
 
   // These store local readings
   float local_Battery_Level; 
@@ -602,13 +711,61 @@ bool parseInput(String inputString){
       bot.setAutomaticMode(true);
     } 
 
+    // MOV:
+    // Based on a users input. 
+    // Read the compass and deviate
+    // EX: 1,MOV,L,100
+    if(Command == "MOV"){
+
+      const int MOVE_OFFSET = 10; // offset 10 degrees
+
+      float local_compass_heading;
+
+      // parse direction
+      int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
+      String movDirection = inputString.substring(indexOfSecondComma + 1, indexOfThirdComma); 
+      Serial.print("The Move Direction is: ");
+      Serial.println(movDirection);
+
+      // parse speed
+      int indexOfFourthComma = inputString.indexOf(',',indexOfThirdComma + 1); 
+      String moveSpeed = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma); 
+      Serial.print("The Move Speed is: ");
+      Serial.println(moveSpeed);
+
+      // TD: Set Speed
+      bot.setSpeed(moveSpeed.toInt());
+
+      // Calcuate Target IMU (based on direction and offset
+        local_compass_heading = bot.getCurrentHeading();
+
+        float newTargetHeading = calculateTargetHeading(local_compass_heading, MOVE_OFFSET, movDirection); 
+        bot.setTargetHeading(newTargetHeading);
+
+      // Set movMode to true
+      bot.setMoveMode(true);
+    }
+
+
+    // Stoppers for automatic modes
+    if(Command == "MOVSTOP"){
+      bot.setMoveMode(false);
+    }
+
     if(Command == "AUTOSTOP"){
       bot.setAutomaticMode(false);
     }
 
-    if(bot.getAutomaticMode()){
-      return;
+
+    // If in an automatic mode, do not parse (90,90)'s
+    if(bot.getMoveMode()){
+      return true;
     }
+
+    if(bot.getAutomaticMode()){
+      return true;
+    }
+
 
     // MOVPWM
     if(Command == "MOVPWM"){
@@ -625,7 +782,6 @@ bool parseInput(String inputString){
       motors.move(leftPWMString.toInt(), rightPWMString.toInt());
     }
 
-    
 
     // STARTUP
     if(Command == "STARTUP"){
@@ -680,6 +836,19 @@ void handleTransmission(bool transmittedFlag, int transmissionState){
 //////////////////////////
 // GPS Helper Functions //
 //////////////////////////
+float calculateTargetHeading(float baseTargetHeading, int MOVE_OFFSET, String dir){
+  float targetHeading = baseTargetHeading;
+
+  if (dir == "L") {
+    targetHeading = fmod(baseTargetHeading + 360.0f - MOVE_OFFSET, 360.0f);
+  }
+  else if (dir == "R") {
+    targetHeading = fmod(baseTargetHeading + MOVE_OFFSET, 360.0f);
+  }
+  // else F or anything else: keep baseTargetHeading
+
+  return targetHeading;
+}
 
 // Function to convert degrees * 10^-7 to decimal degrees
 double convertToDecimal(long value) {
