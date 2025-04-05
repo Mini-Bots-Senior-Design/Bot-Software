@@ -456,6 +456,7 @@ void BotTask(void *pvParameters) {
 // Automatic Task: Read Sensor Data and Move Bot
 void AutomaticTask(void *pvParameters){
   while(1){
+    // Waypoint Algorithim
     if(bot.getAutomaticMode()){
       Serial.println("In Automatic Mode");
 
@@ -484,6 +485,17 @@ void AutomaticTask(void *pvParameters){
 
     vTaskDelay(1000 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
+
+  // Direction Algorithim
+  // if(bot.getMoveMode){
+    // Read Compass Heading
+
+    // Read Target Compass Heading
+
+    // PID control on heading change, left motor, and right, motor
+  }
+
+
 }
 
 //////////////////
@@ -630,9 +642,22 @@ bool parseInput(String inputString){
     // Read the compass and deviate
     // EX: 1,MOV,L,100
     if(Command == "MOV"){
+
+      // Parse Direction
       // L: set a target compass angle to be XX to the left, then keep going forward
       // R: set a target compass angle to be XX to the right, then keep going forward
       // F: set a target compass angle to be current compass angle, keep going forward
+
+      // Parse Power
+
+      // Calcuate Target IMU (based on direction)
+        // Read IMU, Calculate new Compass Reading
+
+      // Set movMode to true
+    }
+
+    if(Command == "MOVSTOP"){
+      // Set moveMode = false
     }
 
 
