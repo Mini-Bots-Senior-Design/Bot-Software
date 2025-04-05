@@ -625,7 +625,16 @@ bool parseInput(String inputString){
       motors.move(leftPWMString.toInt(), rightPWMString.toInt());
     }
 
-    
+    // MOV:
+    // Based on a users input. 
+    // Read the compass and deviate
+    // EX: 1,MOV,L,100
+    if(Command == "MOV"){
+      // L: set a target compass angle to be XX to the left, then keep going forward
+      // R: set a target compass angle to be XX to the right, then keep going forward
+      // F: set a target compass angle to be current compass angle, keep going forward
+    }
+
 
     // STARTUP
     if(Command == "STARTUP"){
