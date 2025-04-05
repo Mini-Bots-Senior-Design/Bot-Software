@@ -623,8 +623,9 @@ bool parseInput(String inputString){
       String rightPWMString = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma); 
 
       motors.move(leftPWMString.toInt(), rightPWMString.toInt());
-
     }
+
+    
 
     // STARTUP
     if(Command == "STARTUP"){
