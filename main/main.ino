@@ -600,8 +600,14 @@ bool parseInput(String inputString){
       bot.setTargetGPS(latString.toInt(), lonString.toInt());
 
       bot.setAutomaticMode(true);
-    } else{
+    } 
+
+    if(Command == "AUTOSTOP"){
       bot.setAutomaticMode(false);
+    }
+
+    if(bot.getAutomaticMode()){
+      return;
     }
 
     // MOVPWM
