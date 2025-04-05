@@ -2,6 +2,10 @@
 #include <ESP32Servo.h> 
 #include <math.h> // GPS Functions
 
+#include <Arduino.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include "LoRaBoards.h" // LoRa 
 #include <RadioLib.h>   // LoRa
 
@@ -22,28 +26,269 @@
 #define RADIO_DIO2_PIN 32  // Optional
 
 
-Servo motor1;  // create servo object to control a servo
-Servo motor2; 
+class BotData {
+public:
+  // Constructor: Initialize sensor values and create a mutex.
+  BotData(const char* botID) 
+    : _botID(botID),
+      _currentGPSLatitude(0),
+      _currentGPSLongitude(0),
+      _compassHeading(0.0f),
+      _targetGPSLatitude(0),
+      _targetGPSLongitude(0),
+      _batteryLevel(0.0f),
+      _automaticMode(false)
+  {
+    _xMutexSensor_IMU = xSemaphoreCreateMutex();
+    _xMutexSensor_Current_GPS = xSemaphoreCreateMutex();
+    _xMutexSensor_Target_GPS = xSemaphoreCreateMutex();
+    _xMutexAutomatic = xSemaphoreCreateMutex();
+    _xMutexSensor_BatterySensor = xSemaphoreCreateMutex();
 
-int minUs = 1000;
-int maxUs = 2000;
-int frequency = 50; // 50Hz
+    if (_xMutexSensor_IMU == NULL) {Serial.println("Failed to create IMU mutex");}
+    if (_xMutexSensor_Current_GPS == NULL) {Serial.println("Failed to create current GPS mutex");}
+    if (_xMutexSensor_Target_GPS == NULL) {Serial.println("Failed to create target GPS mutex");}
+    if (_xMutexAutomatic == NULL) {Serial.println("Failed to create target automatic mutex");}
+    if (_xMutexSensor_BatterySensor == NULL) {Serial.println("Failed to create target automatic mutex");}
 
-int motorpin1 = 13;      // GPIO pin used to connect the servo control (digital out) 
-int motorpin2 = 2;      // GPIO pin used to connect the servo control (digital out)  
 
-const char* BOTID = "1";
+  }
+  
+  // 
+  // Destructor: Delete the mutex.
+  // ~SensorData() {
+  //   if (_mutex != NULL) {
+  //     vSemaphoreDelete(_mutex);
+  //   }
+  // }
+  
+  // Getter for BotID (read-only)
+  const char* getBotID() const {
+    return _botID;
+  }
+  
+  // CURRENT GPS: Setters and Getters
+  void readGPS_mock(long &latitude_reading, long &longitude_reading) {
+    if(xSemaphoreTake(_xMutexSensor_Current_GPS, portMAX_DELAY) == pdTRUE) {
+      latitude_reading = 111; // change to be real
+      longitude_reading = 222; // change to be real
+      xSemaphoreGive(_xMutexSensor_Current_GPS);
+    }
+  }
 
-// Sensor Values
-long Current_GPS_Latitude = 0;
-long Current_GPS_Longitude = 0;
-float Current_Compass_Heading = 0;
+  void setCurrentGPS(long latitude, long longitude) {
+    if(xSemaphoreTake(_xMutexSensor_Current_GPS, portMAX_DELAY) == pdTRUE) {
+      _currentGPSLatitude = latitude;
+      _currentGPSLongitude = longitude;
+      xSemaphoreGive(_xMutexSensor_Current_GPS);
+    }
+  }
+  
+  void getCurrentGPS(long &latitude, long &longitude) {
+    if(xSemaphoreTake(_xMutexSensor_Current_GPS, portMAX_DELAY) == pdTRUE) {
+      latitude = _currentGPSLatitude;
+      longitude = _currentGPSLongitude;
+      xSemaphoreGive(_xMutexSensor_Current_GPS);
+    }
+  }
+  
+  // TARGET GPS: Setters and Getters
+  void setTargetGPS(long latitude, long longitude) {
+    if(xSemaphoreTake(_xMutexSensor_Target_GPS, portMAX_DELAY) == pdTRUE) {
+      _targetGPSLatitude = latitude;
+      _targetGPSLongitude = longitude;
+      xSemaphoreGive(_xMutexSensor_Target_GPS);
+    }
+  }
+  
+  void getTargetGPS(long &latitude, long &longitude) {
+    if(xSemaphoreTake(_xMutexSensor_Target_GPS, portMAX_DELAY) == pdTRUE) {
+      latitude = _targetGPSLatitude;
+      longitude = _targetGPSLongitude;
+      xSemaphoreGive(_xMutexSensor_Target_GPS);
+    }
+  }
 
-long Target_GPS_Latitude = 0;
-long Target_GPS_Longitude = 0;
+  // Return a string
+  String getGPS_String() {
+    long currentLon;
+    long currentLat;
 
-// State
-bool automaticMode = false;
+    getCurrentGPS(currentLon, currentLat);
+    String gpsString = String(currentLat) + "," + String(currentLon);
+
+    return gpsString;  // Return the formatted string
+  }
+  
+  // Setters and getters for the compass heading //
+  float readIMU_mock() {
+    float heading;
+
+    if(xSemaphoreTake(_xMutexSensor_IMU, portMAX_DELAY) == pdTRUE) {
+      heading = 2.2; // change to be real
+      xSemaphoreGive(_xMutexSensor_IMU);
+    }
+    return heading;
+  }
+
+  void setHeading(float heading) {
+    if(xSemaphoreTake(_xMutexSensor_IMU, portMAX_DELAY) == pdTRUE) {
+      _compassHeading = heading;
+      xSemaphoreGive(_xMutexSensor_IMU);
+    }
+  }
+  
+  float getHeading() {
+    float heading = 0.0f;
+    if(xSemaphoreTake(_xMutexSensor_IMU, portMAX_DELAY) == pdTRUE) {
+      heading = _compassHeading;
+      xSemaphoreGive(_xMutexSensor_IMU);
+    }
+    return heading;
+  }
+
+  // Setters and getters for battery sensor //
+  float readBatterySensor_mock() {
+    float batteryLevel;
+    if(xSemaphoreTake(_xMutexSensor_BatterySensor, portMAX_DELAY) == pdTRUE) {
+      batteryLevel = 22.22; // change to be real
+      xSemaphoreGive(_xMutexSensor_BatterySensor);
+    }
+    return batteryLevel;
+  }
+
+  void setBatteryLevel(float batteryLevel) {
+    if(xSemaphoreTake(_xMutexSensor_BatterySensor, portMAX_DELAY) == pdTRUE) {
+      _batteryLevel = batteryLevel;
+      xSemaphoreGive(_xMutexSensor_BatterySensor);
+    }
+  }
+  
+  float getBatteryLevel() {
+    float batteryLevel = 0.0f;
+    if(xSemaphoreTake(_xMutexSensor_BatterySensor, portMAX_DELAY) == pdTRUE) {
+      batteryLevel = _batteryLevel;
+      xSemaphoreGive(_xMutexSensor_BatterySensor);
+    }
+    return batteryLevel;
+  }
+
+  // Setters and getters for target GPS //
+  bool getAutomaticMode() {
+    bool automaticMode;
+    if(xSemaphoreTake(_xMutexAutomatic, portMAX_DELAY) == pdTRUE) {
+      automaticMode = _automaticMode;
+      xSemaphoreGive(_xMutexAutomatic);
+    }
+    return automaticMode;
+  }
+  
+  void setAutomaticMode(bool automaticMode) {
+    if(xSemaphoreTake(_xMutexAutomatic, portMAX_DELAY) == pdTRUE) {
+      _automaticMode = automaticMode;
+      xSemaphoreGive(_xMutexAutomatic);
+    }
+  }
+
+  String getAllData(){
+    long currentGPSLatitude;
+    long currentGPSLongitude;
+    long targetGPSLatitude;
+    long targetGPSLongitude;
+    float compassHeading;
+    float batteryLevel;
+
+    // get target gps data
+    getTargetGPS(targetGPSLatitude, targetGPSLongitude);
+
+    // get current gps data
+    getCurrentGPS(currentGPSLatitude, currentGPSLongitude);
+
+    // get compass data
+    compassHeading = getHeading();
+
+    // get battery level data
+    batteryLevel = getBatteryLevel();
+
+    String data = "Target: " + String(targetGPSLatitude) + "," + String(targetGPSLongitude) +
+               " | Current: " + String(currentGPSLatitude) + "," + String(currentGPSLongitude) +
+               " | Heading: " + String(compassHeading) +
+               " | Battery Level: " + String(batteryLevel);
+  
+    return data;
+  }   
+
+  // TD, Add battery sensor level
+  String createPayload(){
+
+    String latLon = getGPS_String();
+    String createdString = "0," + String(_botID) + "," + latLon; // Why Zero? ohh zero is SBC
+
+    return createdString;
+  }
+
+private:
+  const char* _botID;
+
+  // Sensor values
+  long _currentGPSLatitude;
+  long _currentGPSLongitude;
+  float _compassHeading;
+  long _targetGPSLatitude;
+  long _targetGPSLongitude;
+  float _batteryLevel;
+
+  bool _automaticMode = false;
+
+  // Mutex to protect sensor data access
+  SemaphoreHandle_t _xMutexSensor_IMU;
+  SemaphoreHandle_t _xMutexSensor_Current_GPS;
+  SemaphoreHandle_t _xMutexSensor_Target_GPS;
+  SemaphoreHandle_t _xMutexSensor_BatterySensor;
+
+  SemaphoreHandle_t _xMutexAutomatic;
+};
+
+
+class MotorController {
+  public:
+    Servo motor1;
+    Servo motor2;
+
+    int motorpin1 = 13;
+    int motorpin2 = 2;
+
+    int minUs = 1000;
+    int maxUs = 2000;
+
+    int frequency = 50;
+
+    void setupMotors() {
+      motor1.setPeriodHertz(frequency);// Standard 50hz servo
+      motor2.setPeriodHertz(frequency);// Standard 50hz servo
+      motor1.attach(motorpin1, minUs, maxUs); 
+      motor2.attach(motorpin2, minUs, maxUs); 
+    }
+
+    void calibrateMotors(){
+      // Calibrate Motors
+      Serial.println("Calibrating Motors...");
+      motor1.write(90);                 
+      motor2.write(90);
+      delay(5000); 
+      Serial.println("Calibration Finished");
+    }
+
+    void move(int speed1, int speed2) {
+        motor1.writeMicroseconds(speed1);
+        motor2.writeMicroseconds(speed2);
+    }
+
+    void stopMotors(){
+      motor1.write(90);                 
+      motor2.write(90);
+    }
+};
 
 // LoRa Start
 // Set up the LoRa module for SX1278
@@ -53,53 +298,30 @@ String payload = "";
 volatile bool receivedFlag = false;
 volatile bool transmittedFlag = false;
 
-// Mutexes to protect shared resources
-SemaphoreHandle_t xMutexSensor_IMU;
-SemaphoreHandle_t xMutexSensor_GPS;
-
-SemaphoreHandle_t xMutexAutomatic;
 
 SemaphoreHandle_t xSemaphore; // LoRa
 
-
+MotorController motors;
+BotData bot("1");
 
 void setup() {
   // Start communication with the Serial Monitor (USB Serial)
   Serial.begin(115200); 
 
   // Motor Setup
-  motor1.setPeriodHertz(frequency);// Standard 50hz servo
-  motor2.setPeriodHertz(frequency);// Standard 50hz servo
-  motor1.attach(motorpin1, minUs, maxUs);   // attaches the servo on pin 18 to the servo object
-  motor2.attach(motorpin2, minUs, maxUs);   // attaches the servo on pin 18 to the servo object
-
-  // Create Tasks, 
-
-  delay(1000); // short delay
-
-  // Calibrate Motors
-  Serial.println("Calibrating Motors...");
-  motor1.write(90);                 
-  motor2.write(90);
-  delay(5000); 
-  Serial.println("Calibration Finished");
+  motors.setupMotors();
+  motors.calibrateMotors();
 
   setupLoRa();
 
-  xSemaphore = xSemaphoreCreateBinary();
-  xSemaphoreGive(xSemaphore);
-
-  // For sensors
-  xMutexSensor_IMU = xSemaphoreCreateMutex();
-  xMutexSensor_GPS = xSemaphoreCreateMutex();
-
-  xMutexAutomatic = xSemaphoreCreateMutex();
+  xSemaphore = xSemaphoreCreateBinary(); // mybe improve...
+  xSemaphoreGive(xSemaphore); // mybe improve...
 
 
   xTaskCreate(BotTask, "Bot Task", 2048, NULL, 1, NULL);
-
   xTaskCreate(IMUTask, "IMU Task", 2048, NULL, 1, NULL);
   xTaskCreate(GPSTask, "GPS Task", 2048, NULL, 1, NULL);
+  xTaskCreate(BSTask, "Battery Sensor Task", 2048, NULL, 1, NULL);
 
   xTaskCreate(AutomaticTask, "Automatic Task", 2048, NULL, 1, NULL);
 
@@ -154,7 +376,7 @@ void BotTask(void *pvParameters) {
           switchToTransmitMode();
 
           // Setup Payload
-          payload = createPayload();
+          payload = bot.createPayload();
 
           int transmissionState = radio.transmit(payload);
         }
@@ -170,27 +392,53 @@ void BotTask(void *pvParameters) {
 }
 
 
+// Automatic Task: Read Sensor Data and Move Bot
+void AutomaticTask(void *pvParameters){
+  while(1){
+    if(bot.getAutomaticMode()){
+      Serial.println("In Automatic Mode");
+
+      String gpsString = ""; // Debug
+
+      long targetLat; 
+      long targetLon; 
+      long currentLat;
+      long currentLon;
+      float currentCompass;
+
+      // get current gps data
+      bot.getCurrentGPS(currentLat, currentLon);
+
+      // get target gps data
+      bot.getTargetGPS(targetLat, targetLon);
+
+      // get current imu data
+      currentCompass = bot.getHeading();
+
+      Serial.println(bot.getAllData()); // debug or can make a function that compiles a bunch of variables....
+    }
+    else{
+      Serial.println("Not In Automatic Mode");
+    }
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
+  }
+}
+
+//////////////////
+// Sensor Tasks //
+//////////////////
+
 // This will sample the GPS and IMU Sensors and write them to global variables 
 void GPSTask(void *pvParameters){
 
   // These store local readings
-  long local_GPS_Latitude = 9; // change to store values
-  long local_GPS_Longitude = 10; // change to store values
+  long local_GPS_Latitude;
+  long local_GPS_Longitude; 
 
   while(1){
-    if (xSemaphoreTake(xMutexSensor_GPS, portMAX_DELAY) == pdTRUE) {
-
-      // write local values to globals
-      Current_GPS_Latitude = local_GPS_Latitude;
-      Current_GPS_Longitude = local_GPS_Longitude;
-
-      // Give the mutex back so other tasks can use it
-      xSemaphoreGive(xMutexSensor_GPS);
-    
-    }
-    else {
-      Serial.println("Failed to take mutex");
-    }
+    bot.readGPS_mock(local_GPS_Latitude, local_GPS_Longitude); // read the values, passed by refrence 
+    bot.setCurrentGPS(local_GPS_Latitude, local_GPS_Longitude); // store them in global variables
 
     vTaskDelay(25 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
@@ -199,70 +447,25 @@ void GPSTask(void *pvParameters){
 void IMUTask(void *pvParameters){
 
   // These store local readings
-  float local_Compass_Heading = 1.1; // change to store values
+  float local_Compass_Heading; 
 
   while(1){
-    if (xSemaphoreTake(xMutexSensor_IMU, portMAX_DELAY) == pdTRUE) {
-
-      // write local values to globals
-      Current_Compass_Heading = local_Compass_Heading;
-
-      // Give the mutex back so other tasks can use it
-      xSemaphoreGive(xMutexSensor_IMU);
-    }
-    else {
-      Serial.println("Failed to take mutex");
-    }
+    local_Compass_Heading = bot.readIMU_mock(); // read the values, passed by refrence
+    bot.setHeading(local_Compass_Heading); // store them in global variables
+  
     vTaskDelay(25 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
 }
 
-void AutomaticTask(void *pvParameters){
+void BSTask(void *pvParameters){
+
+  // These store local readings
+  float local_Battery_Level; 
+
   while(1){
-    if(getAutomaticMode()){
-      Serial.println("In Automatic Mode");
-
-      String gpsString = ""; // Debug
-
-      long targetLat = Target_GPS_Latitude; // assuming no mutex conflict
-      long targetLon = Target_GPS_Longitude; // assuming no mutex conflict
-
-      long currentLat;
-      long currentLon;
-
-      float currentCompass;
-
-      if (xSemaphoreTake(xMutexSensor_GPS, portMAX_DELAY) == pdTRUE) {
-        currentLat = Current_GPS_Latitude;
-        currentLon = Current_GPS_Longitude;
-        xSemaphoreGive(xMutexSensor_GPS);
-      }
-
-      if (xSemaphoreTake(xMutexSensor_IMU, portMAX_DELAY) == pdTRUE) {
-        currentCompass = Current_Compass_Heading;
-        xSemaphoreGive(xMutexSensor_IMU);
-      }
-
-      // DEBUG Print:
-      // Convert the longitude and latitude to a string and concatenate them
-      // gpsString = String(currentLon) + "," + String(currentLat);
-      // Serial.print("Current GPS/Compass: ");
-      // Serial.print(gpsString);
-      // Serial.print(" ,Compass: ");
-      // Serial.println(String(currentCompass));
-
-      // gpsString = "Longitude: " + String(targetLon) + ", Latitude: " + String(targetLat);
-      // Serial.print("Target GPS: ");
-      // Serial.println(gpsString);
-
-      // TD: make the calculations
-      // TD: move the motors
-    }
-    else{
-      Serial.println("Not In Automatic Mode");
-    }
-
-    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
+    local_Battery_Level = bot.readBatterySensor_mock();
+    bot.setBatteryLevel(local_Battery_Level);  
+    vTaskDelay(10000 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
 }
 
@@ -286,8 +489,6 @@ void setupLoRa() {
     radio.setCodingRate(6);
     radio.setSyncWord(0x12);
     radio.setOutputPower(17);
-
-    //radio.implicitHeader(255); //ONLY FOR SF6 (param is max packet size)
 
     radio.setPacketSentAction(setTransmissionFlag);
     radio.setPacketReceivedAction(setReceiverFlag);
@@ -317,7 +518,7 @@ bool parseInput(String inputString){
   String BotID = inputString.substring(0, indexOfFirstComma);  
   // Serial.println("BotID: " + BotID);
 
-  if(BotID == BOTID){
+  if(BotID == bot.getBotID()){
 
     // Extract Command
     String Command = inputString.substring(indexOfFirstComma + 1, indexOfSecondComma); 
@@ -336,11 +537,11 @@ bool parseInput(String inputString){
       String lonString = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma); 
 
       // Set Target Points
-      setTargetGPSPoints(latString.toInt(), lonString.toInt());
+      bot.setTargetGPS(latString.toInt(), lonString.toInt());
 
-      setAutomaticModeTrue();
+      bot.setAutomaticMode(true);
     } else{
-      setAutomaticModeFalse();
+      bot.setAutomaticMode(false);
     }
 
     // MOVPWM
@@ -355,13 +556,14 @@ bool parseInput(String inputString){
       int indexOfFourthComma = inputString.indexOf(',',indexOfThirdComma + 1); 
       String rightPWMString = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma); 
 
-      moveMotorsForMOVPWM(leftPWMString.toInt(), rightPWMString.toInt());
+      motors.move(leftPWMString.toInt(), rightPWMString.toInt());
+
     }
 
     // STARTUP
     if(Command == "STARTUP"){
       // Serial.println("STARTUP");
-      stopMotors();
+      motors.stopMotors();
     }
     
     return true;
@@ -371,24 +573,6 @@ bool parseInput(String inputString){
     return false;
   }
 }
-
-
-///////////////////// 
-// Motor Functions // 
-/////////////////////
-
-void stopMotors(){
-  motor1.write(90);                 
-  motor2.write(90);
-}
-
-void moveMotorsForMOVPWM(int leftPWM, int rightPWM){
-  Serial.println("Movin Via da PWM");
-  motor1.write(leftPWM);                 
-  motor2.write(rightPWM); 
-}
-
-
 
 ////////////////////
 // LoRa Functions //
@@ -425,91 +609,10 @@ void handleTransmission(bool transmittedFlag, int transmissionState){
 }
 
 
-//////////////////////////////
-// Payload Helper Functions //
-//////////////////////////////
-
-// Return a string
-String getGPS_String() {
-  long currentLon;
-  long currentLat;
-
-  if (xSemaphoreTake(xMutexAutomatic, portMAX_DELAY) == pdTRUE) {
-    currentLon = Current_GPS_Longitude;
-    currentLat = Current_GPS_Latitude;
-    xSemaphoreGive(xMutexAutomatic);
-  }
-
-  // Convert the longitude and latitude to a string and concatenate them
-  String gpsString = String(currentLat) + "," + String(currentLon);
-  Serial.println(gpsString);
-  return gpsString;  // Return the formatted string
-}
-
-String createPayload(){
-
-  String latLon = getGPS_String();
-  String createdString = "0," + String(BOTID) + "," + latLon; // Why Zero? ohh zero is SBC
-
-  Serial.print("Payload created: ");
-  Serial.println(createdString);
-
-  return createdString;
-}
-
-
-////////////////////////////////////
-// Automatic Mode Setters/Getters //
-////////////////////////////////////
-
-bool getAutomaticMode(){
-  bool localAutomaticMode;
-
-  if (xSemaphoreTake(xMutexAutomatic, portMAX_DELAY) == pdTRUE) {
-    localAutomaticMode = automaticMode;
-
-    xSemaphoreGive(xMutexAutomatic);
-  }
-   else {
-    Serial.println("Failed to take mutex");
-  }
-
-  return localAutomaticMode;
-}
-
-void setAutomaticModeFalse(){
-  if (xSemaphoreTake(xMutexAutomatic, portMAX_DELAY) == pdTRUE) {
-    automaticMode = false;
-
-    xSemaphoreGive(xMutexAutomatic);
-  }
-   else {
-    Serial.println("Failed to take mutex");
-  }
-}
-
-void setAutomaticModeTrue(){
-  if (xSemaphoreTake(xMutexAutomatic, portMAX_DELAY) == pdTRUE) {
-    automaticMode = true;
-
-    xSemaphoreGive(xMutexAutomatic);
-  }
-   else {
-    Serial.println("Failed to take mutex");
-  }
-}
-
 
 //////////////////////////
 // GPS Helper Functions //
 //////////////////////////
-
-void setTargetGPSPoints(long lat, long lon){
-    // Assume no Mutex Conflict
-
-    Target_GPS_Longitude = lon;  // Longitude
-    Target_GPS_Latitude = lat;   // Latitude 
-}
 
 // Function to convert degrees * 10^-7 to decimal degrees
 double convertToDecimal(long value) {
