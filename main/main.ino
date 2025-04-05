@@ -6,6 +6,11 @@
 #include <RadioLib.h>   // LoRa
 
 
+// #include <Wire.h> //Needed for I2C to GNSS
+// #include <SparkFun_u-blox_GNSS_v3.h> // GPS
+#include "SparkFun_BNO08x_Arduino_Library.h" // IMU
+
+
 #define EARTH_RADIUS_FEET 20902230.0 // Earth's radius in feet      // GPS Functions
 #define RAD_TO_DEG (180.0 / M_PI) //    Convert radians to degrees  // GPS Functions
 
@@ -16,16 +21,6 @@
 #define RADIO_DIO1_PIN 33
 #define RADIO_DIO2_PIN 32  // Optional
 
-
-///////////
-// Modes //
-///////////
-// STARTUP
-// MOV
-// TEST
-// MOVGPS
-// MOVPWM
-String STATE = "STARTUP";
 
 Servo motor1;  // create servo object to control a servo
 Servo motor2; 
@@ -42,17 +37,13 @@ const char* BOTID = "1";
 // Sensor Values
 long Current_GPS_Latitude = 0;
 long Current_GPS_Longitude = 0;
-//float Current_Compass_Heading = 0;
+float Current_Compass_Heading = 0;
 
 long Target_GPS_Latitude = 0;
 long Target_GPS_Longitude = 0;
 
 // State
 bool automaticMode = false;
-
-// Switch to get real value
-bool DEBUG = true;
-
 
 // LoRa Start
 // Set up the LoRa module for SX1278
@@ -62,32 +53,14 @@ String payload = "";
 volatile bool receivedFlag = false;
 volatile bool transmittedFlag = false;
 
-SemaphoreHandle_t xSemaphore;
-TaskHandle_t BotTaskHandle = NULL;
-// LoRa end
-
-
-
-
-#include <Wire.h> //Needed for I2C to GNSS
-#include <SparkFun_u-blox_GNSS_v3.h> //http://librarymanager/All#SparkFun_u-blox_GNSS_v3
-#include "SparkFun_BNO08x_Arduino_Library.h"
-
-// IMU Start
-
-// BNO08x imu;
-// #define BNO08X_ADDR 0x4B
-
-// IMU END
-
-// GPS Start
-SFE_UBLOX_GNSS myGNSS;
-long lastTime = 0; //Simple local timer. Limits amount if I2C traffic to u-blox module.
-// GPS End
-
 // Mutexes to protect shared resources
-SemaphoreHandle_t xMutexSensor;
+SemaphoreHandle_t xMutexSensor_IMU;
+SemaphoreHandle_t xMutexSensor_GPS;
+
 SemaphoreHandle_t xMutexAutomatic;
+
+SemaphoreHandle_t xSemaphore; // LoRa
+
 
 
 void setup() {
@@ -99,40 +72,6 @@ void setup() {
   motor2.setPeriodHertz(frequency);// Standard 50hz servo
   motor1.attach(motorpin1, minUs, maxUs);   // attaches the servo on pin 18 to the servo object
   motor2.attach(motorpin2, minUs, maxUs);   // attaches the servo on pin 18 to the servo object
-
-  // GPS Start //
-  Serial.println("Configuring GPS....");
-
-  Wire.begin();
-  delay(1000);
-
-  if (myGNSS.begin() == false) //Connect to the u-blox module using Wire port
-  {
-    Serial.println(F("u-blox GNSS not detected at default I2C address. Please check wiring. Freezing."));
-    while (1);
-  }
-
-  myGNSS.setI2COutput(COM_TYPE_UBX); //Set the I2C port to output UBX only (turn off NMEA noise)
-  myGNSS.saveConfigSelective(VAL_CFG_SUBSEC_IOPORT); //Save (only) the communications port settings to flash and BBR
-  Serial.println("GPS Configured");
-  // GPS End // 
-
-  // TD: BENJI
-  // IMU SETUP START
-  // if (imu.begin() == false) {
-  //   Serial.println("BNO08x not detected at default I2C address. Check your jumpers and the hookup guide. Freezing...");
-  //   while (1);
-  // }
-  // Serial.println("BNO08x found!");
-
-  // if (imu.enableGeomagneticRotationVector() == true) {
-  //   Serial.println(F("Geomagnetic Rotation vector enabled"));
-  //   Serial.println(F("Output in form roll, pitch, yaw"));
-  // } else {
-  //   Serial.println("Could not enable geomagnetic rotation vector");
-  // }
-
-  // IMU SETUP End
 
   // Create Tasks, 
 
@@ -151,12 +90,17 @@ void setup() {
   xSemaphoreGive(xSemaphore);
 
   // For sensors
-  xMutexSensor = xSemaphoreCreateMutex();
+  xMutexSensor_IMU = xSemaphoreCreateMutex();
+  xMutexSensor_GPS = xSemaphoreCreateMutex();
+
   xMutexAutomatic = xSemaphoreCreateMutex();
 
 
   xTaskCreate(BotTask, "Bot Task", 2048, NULL, 1, NULL);
-  xTaskCreate(SensorTask, "Sensor Task", 2048, NULL, 1, NULL);
+
+  xTaskCreate(IMUTask, "IMU Task", 2048, NULL, 1, NULL);
+  xTaskCreate(GPSTask, "GPS Task", 2048, NULL, 1, NULL);
+
   xTaskCreate(AutomaticTask, "Automatic Task", 2048, NULL, 1, NULL);
 
   Serial.println("Startup Completed");
@@ -227,49 +171,48 @@ void BotTask(void *pvParameters) {
 
 
 // This will sample the GPS and IMU Sensors and write them to global variables 
-void SensorTask(void *pvParameters){
-  long local_GPS_Latitude;
-  long local_GPS_Longitude;
-  //float local_Compass_Heading;
+void GPSTask(void *pvParameters){
 
-  int cycleNumber = 1;
+  // These store local readings
+  long local_GPS_Latitude = 9; // change to store values
+  long local_GPS_Longitude = 10; // change to store values
 
   while(1){
-    //if (cycleNumber == 5) {
-      local_GPS_Latitude = myGNSS.getLatitude();
-      local_GPS_Longitude = myGNSS.getLongitude();
+    if (xSemaphoreTake(xMutexSensor_GPS, portMAX_DELAY) == pdTRUE) {
 
-      Serial.print(local_GPS_Latitude);
-      Serial.print(", ");
-      Serial.println(local_GPS_Longitude);
-    //}
-    // local_GPS_Latitude = 100;
-    // local_GPS_Longitude = 100;
-    //local_Compass_Heading = readIMU();
-
-    if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
-    
-      // Assign to Globals
-      //if (cycleNumber == 5) {
-        Current_GPS_Latitude = local_GPS_Latitude;
-        Current_GPS_Longitude = local_GPS_Longitude;
-      //}
-      //Current_Compass_Heading = local_Compass_Heading; 
+      // write local values to globals
+      Current_GPS_Latitude = local_GPS_Latitude;
+      Current_GPS_Longitude = local_GPS_Longitude;
 
       // Give the mutex back so other tasks can use it
-      xSemaphoreGive(xMutexSensor);
+      xSemaphoreGive(xMutexSensor_GPS);
     
     }
     else {
       Serial.println("Failed to take mutex");
     }
 
-    // if (cycleNumber == 10) {
-    //   cycleNumber = 1;
-    // }
-    // else {
-    //   cycleNumber++;
-    // }
+    vTaskDelay(25 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
+  }
+}
+
+void IMUTask(void *pvParameters){
+
+  // These store local readings
+  float local_Compass_Heading = 1.1; // change to store values
+
+  while(1){
+    if (xSemaphoreTake(xMutexSensor_IMU, portMAX_DELAY) == pdTRUE) {
+
+      // write local values to globals
+      Current_Compass_Heading = local_Compass_Heading;
+
+      // Give the mutex back so other tasks can use it
+      xSemaphoreGive(xMutexSensor_IMU);
+    }
+    else {
+      Serial.println("Failed to take mutex");
+    }
     vTaskDelay(25 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
 }
@@ -278,34 +221,39 @@ void AutomaticTask(void *pvParameters){
   while(1){
     if(getAutomaticMode()){
       Serial.println("In Automatic Mode");
+
       String gpsString = ""; // Debug
+
+      long targetLat = Target_GPS_Latitude; // assuming no mutex conflict
+      long targetLon = Target_GPS_Longitude; // assuming no mutex conflict
+
       long currentLat;
       long currentLon;
-      long targetLat;
-      long targetLon;
-      //float currentCompass;
 
-      if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
-        targetLat = Target_GPS_Latitude;
-        targetLon = Target_GPS_Longitude;
+      float currentCompass;
+
+      if (xSemaphoreTake(xMutexSensor_GPS, portMAX_DELAY) == pdTRUE) {
         currentLat = Current_GPS_Latitude;
         currentLon = Current_GPS_Longitude;
-        //currentCompass = Current_Compass_Heading;
-        xSemaphoreGive(xMutexSensor);
+        xSemaphoreGive(xMutexSensor_GPS);
+      }
+
+      if (xSemaphoreTake(xMutexSensor_IMU, portMAX_DELAY) == pdTRUE) {
+        currentCompass = Current_Compass_Heading;
+        xSemaphoreGive(xMutexSensor_IMU);
       }
 
       // DEBUG Print:
       // Convert the longitude and latitude to a string and concatenate them
-      gpsString = String(currentLon) + "," + String(currentLat);
-      Serial.print("Current GPS/Compass: ");
-      Serial.print(gpsString);
+      // gpsString = String(currentLon) + "," + String(currentLat);
+      // Serial.print("Current GPS/Compass: ");
+      // Serial.print(gpsString);
       // Serial.print(" ,Compass: ");
       // Serial.println(String(currentCompass));
 
-      gpsString = "Longitude: " + String(targetLon) + ", Latitude: " + String(targetLat);
-      Serial.print("Target GPS: ");
-      Serial.println(gpsString);
-
+      // gpsString = "Longitude: " + String(targetLon) + ", Latitude: " + String(targetLat);
+      // Serial.print("Target GPS: ");
+      // Serial.println(gpsString);
 
       // TD: make the calculations
       // TD: move the motors
@@ -395,19 +343,6 @@ bool parseInput(String inputString){
       setAutomaticModeFalse();
     }
 
-    // MOV
-    if(Command == "MOV"){
-      // Serial.println("MOV");
-
-      // Extract Command
-      int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
-      String Direction = inputString.substring(indexOfSecondComma + 1, indexOfThirdComma); 
-      // Serial.println("Direction: " + Direction);
-
-      // Move the Motors
-      moveMotorsForMOV(Direction);
-    }
-
     // MOVPWM
     if(Command == "MOVPWM"){
       // Serial.println("MOVPWM");
@@ -453,37 +388,6 @@ void moveMotorsForMOVPWM(int leftPWM, int rightPWM){
   motor2.write(rightPWM); 
 }
 
-void moveMotorsForMOV(String direction){
-  if(direction == "F"){
-    Serial.println("Movin Forward");
-    motor1.write(110);                 
-    motor2.write(110); 
-  }
-  else if(direction == "B"){
-    Serial.println("Movin Back");
-    motor1.write(70);                 
-    motor2.write(70); 
-  }
-  else if(direction == "L"){
-    Serial.println("Movin Left");
-    motor1.write(110);                 
-    motor2.write(70); 
-  }
-  else if(direction == "R"){
-    Serial.println("Movin Right");
-    motor1.write(70);                 
-    motor2.write(110); 
-  }
-  else if(direction == "S"){
-    Serial.println("Movin Stop");
-    motor1.write(90);                 
-    motor2.write(90); 
-  }
-  else{
-    Serial.println("Incorrect Format");
-  }
-}
-
 
 
 ////////////////////
@@ -519,32 +423,6 @@ void handleTransmission(bool transmittedFlag, int transmissionState){
     Serial.println("Transmit error, code " + String(transmissionState));
   }
 }
-
-// This function reads the IMU's Compass
-// TD: BENJI
-float readIMU(){
-  float currentDegrees;
-
-  // if (imu.wasReset()) {
-  //   Serial.print("sensor was reset ");
-  //   if (imu.enableGeomagneticRotationVector() == true) {
-  //     Serial.println(F("Geomagnetic Rotation vector enabled"));
-  //     Serial.println(F("Output in form roll, pitch, yaw"));
-  //   } else {
-  //     Serial.println("Could not enable geomagnetic rotation vector");
-  //   }
-  // }
-
-  // if (imu.getSensorEvent() == true) {
-  //   if (imu.getSensorEventID() == SENSOR_REPORTID_GEOMAGNETIC_ROTATION_VECTOR) {
-  //     float yaw = (imu.getYaw()) * 180.0 / PI;
-  //     if (yaw < 0) yaw += 360.0;
-  //     currentDegrees = yaw;
-  //   }
-  // }
-  return currentDegrees;
-}
-
 
 
 //////////////////////////////
@@ -622,31 +500,16 @@ void setAutomaticModeTrue(){
 }
 
 
-////////////////////////////////
-// Target GPS Setters/Getters //
-////////////////////////////////
+//////////////////////////
+// GPS Helper Functions //
+//////////////////////////
+
 void setTargetGPSPoints(long lat, long lon){
-    // Take the mutex to gain exclusive access to the global variables
-  if (xSemaphoreTake(xMutexSensor, portMAX_DELAY) == pdTRUE) {
-    
+    // Assume no Mutex Conflict
+
     Target_GPS_Longitude = lon;  // Longitude
     Target_GPS_Latitude = lat;   // Latitude 
-
-    // Give the mutex back so other tasks can use it
-    xSemaphoreGive(xMutexSensor);
-    
-  }
-  else {
-    Serial.println("Failed to take mutex");
-  }
 }
-
-
-
-
-// 
-// GPS Helper Fuctions //
-//
 
 // Function to convert degrees * 10^-7 to decimal degrees
 double convertToDecimal(long value) {
