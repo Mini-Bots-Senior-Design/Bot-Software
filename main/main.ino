@@ -38,6 +38,7 @@ TinyGPSPlus gps;
 #define IMU_Period 250
 #define Battery_Sensor_Period 300000
 
+bool moveMode = false;
 
 class BotData {
 public:
@@ -52,8 +53,8 @@ public:
       _targetCompassHeading(0.0f),
       _batteryLevel(0.0f),
       _automaticMode(false),
-      _moveMode(false),
-      _speed(0)
+      _speed(0),
+      _direction("S")
   {
     _xMutexSensor_Current_GPS = xSemaphoreCreateMutex();
     _xMutexSensor_Target_GPS = xSemaphoreCreateMutex();
@@ -64,7 +65,6 @@ public:
     _xMutexSensor_BatterySensor = xSemaphoreCreateMutex();
 
     _xMutexAutomatic = xSemaphoreCreateMutex();
-    _xMutexMove = xSemaphoreCreateMutex();
 
     _xMutexSpeed = xSemaphoreCreateMutex();
   }
@@ -112,7 +112,7 @@ public:
       longitude_reading = lng_data;
 
     } else {
-      Serial.println("INVALID");
+      // Serial.println("INVALID");
     }
   }
 
@@ -248,7 +248,7 @@ public:
   void setSpeed(int speed) {
     if(xSemaphoreTake(_xMutexSpeed, portMAX_DELAY) == pdTRUE) {
       _speed = speed;
-      xSemaphoreGive(_xMutexSensor_Target_GPS);
+      xSemaphoreGive(_xMutexSpeed);
     }
   }
   
@@ -261,6 +261,18 @@ public:
     return speed;
   }
 
+  /////////////////////////////////////
+  // Direction: Setters and Getters //
+  /////////////////////////////////////
+
+  
+  String getDirection() {
+      return _direction;
+  }
+
+  void setDirection(const String &direction) {
+      _direction = direction;
+  }
 
   ///////////////////////////
   // Change Automatic Mode //
@@ -285,21 +297,21 @@ public:
   //////////////////////
   // Change Move Mode //
   //////////////////////
-  bool getMoveMode() {
-    bool moveMode;
-    if(xSemaphoreTake(_xMutexMove, portMAX_DELAY) == pdTRUE) {
-      moveMode = _moveMode;
-      xSemaphoreGive(_xMutexMove);
-    }
-    return moveMode;
-  }
+  // bool getMoveMode() {
+  //   bool moveMode;
+  //   if(xSemaphoreTake(_xMutexMove, portMAX_DELAY) == pdTRUE) {
+  //     moveMode = _moveMode;
+  //     xSemaphoreGive(_xMutexMove);
+  //   }
+  //   return moveMode;
+  // }
   
-  void setMoveMode(bool moveMode) {
-    if(xSemaphoreTake(_xMutexMove, portMAX_DELAY) == pdTRUE) {
-      _moveMode = moveMode;
-      xSemaphoreGive(_xMutexMove);
-    }
-  }
+  // void setMoveMode(bool moveMode) {
+  //   if(xSemaphoreTake(_xMutexMove, portMAX_DELAY) == pdTRUE) {
+  //     _moveMode = moveMode;
+  //     xSemaphoreGive(_xMutexMove);
+  //   }
+  // }
 
 
   ////////////////////////////////
@@ -359,10 +371,10 @@ public:
     return createdString;
   }
 
-
-
 private:
   char _botID[20];
+  String _direction;
+
 
   // Sensor values
   long _currentGPSLatitude;
@@ -444,12 +456,14 @@ String payload = "";
 volatile bool receivedFlag = false;
 volatile bool transmittedFlag = false;
 
-
 SemaphoreHandle_t xSemaphore; // LoRa
 
 MotorController motors;
 BotData bot;
 
+
+
+// SETUP //
 void setup() {
   // Start communication with the Serial Monitor (USB Serial)
   Serial.begin(115200); 
@@ -473,11 +487,11 @@ void setup() {
   xSemaphoreGive(xSemaphore); // mybe improve...
 
   xTaskCreate(BotTask, "Bot Task", 2048, NULL, 1, NULL);
-  xTaskCreate(IMUTask, "IMU Task", 2048, NULL, 1, NULL);
-  xTaskCreate(GPSTask, "GPS Task", 2048, NULL, 1, NULL);
-  xTaskCreate(BatterySensorTask, "Battery Sensor Task", 2048, NULL, 1, NULL);
+  xTaskCreate(IMUTask, "IMU Task", 2048, NULL, 3, NULL);
+  xTaskCreate(GPSTask, "GPS Task", 2048, NULL, 3, NULL);
+  // xTaskCreate(BatterySensorTask, "Battery Sensor Task", 2048, NULL, 3, NULL);
 
-  xTaskCreate(AutomaticTask, "Automatic Task", 2048, NULL, 1, NULL);
+  xTaskCreate(AlgoTask, "Automatic Task", 2048, NULL, 2, NULL);
 
   Serial.println("Startup Completed");
 }
@@ -547,43 +561,67 @@ void BotTask(void *pvParameters) {
 
 
 // Automatic Task: Read Sensor Data and Move Bot
-void AutomaticTask(void *pvParameters){
+void AlgoTask(void *pvParameters){
   while(1){
-    // Waypoint Algorithim
-    if(bot.getAutomaticMode()){
-      Serial.println("In Automatic Mode");
 
-      String gpsString = ""; // Debug
+    //////////////////////////
+    // Direction Algorithim //
+    //////////////////////////
+    // else if(bot.getMoveMode()){
+    if(moveMode){
 
-      long targetLat; 
-      long targetLon; 
-      long currentLat;
-      long currentLon;
+      const int MOVE_OFFSET = 10; // offset 10 degrees
 
-      float currentHeading;
-      float targetHeading; // to implement
 
-      // get current gps data
-      bot.getCurrentGPS(currentLat, currentLon);
+      float currentHeading; 
+      float targetHeading; 
+      String direction;
+      float targetSpeed; // relative power
 
-      // get target gps data
-      bot.getTargetGPS(targetLat, targetLon);
+      // Motor Inputs
+      int leftPWM; 
+      int rightPWM;
 
-      // get current imu data
+
+      // DEBUG START:
+      // Print the current compass and the target compass;
       currentHeading = bot.getCurrentHeading();
+      direction = bot.getDirection();
 
-      // TD: add the algorithim lmao
-      // Right now.. just printing all the vars
-      Serial.println(bot.getAllData()); 
-    }
+      // targetSpeed = bot.getSpeed();
 
-    // Direction Algorithim
-    else if(bot.getMoveMode()){
-      Serial.println("In Compass Lock Mode");
+      Serial.print("Current Heading: ");
+      Serial.println(currentHeading);
 
-      // TD: Add the algo lol
-      // Right now... just print the vars
-      // Serial.println(bot.getAllData()); 
+      Serial.print("Direction: ");
+      Serial.println(direction);
+
+      // Now add / subtract offset
+      if(direction == "L"){
+        targetHeading = currentHeading - MOVE_OFFSET;
+      }
+      else if(direction == "R"){
+        targetHeading = currentHeading + MOVE_OFFSET;
+      }
+      else if(direction == "S"){
+        targetHeading = currentHeading;
+      }
+
+      Serial.print("Target Heading: ");
+      Serial.println(targetHeading);
+
+      // Serial.print("Target Heading: ");
+      // Serial.println(targetSpeed);
+      // DEBUG END:
+
+      // Then ALGO Time
+      // Inputs: currentheading, targetheading, speed
+      // Outputs: leftPWM, rightPWM
+
+      // Then move the motors:
+      // motors.move(leftPWM, rightPWM)
+
+
     } 
     else{
       Serial.println("Not In Any Auto Mode");
@@ -599,7 +637,7 @@ void AutomaticTask(void *pvParameters){
 // Sensor Tasks //
 //////////////////
 
-// This will sample the GPS and IMU Sensors and write them to global variables 
+// This will sample the GPS Sensors and write them to global variables // It will also read the battery value
 void GPSTask(void *pvParameters){
 
   // These store local readings
@@ -607,7 +645,8 @@ void GPSTask(void *pvParameters){
   long local_GPS_Longitude; 
 
   while(1){
-    bot.readGPS(local_GPS_Latitude, local_GPS_Longitude); // read the values, passed by refrence 
+    bot.readGPS_mock(local_GPS_Latitude, local_GPS_Longitude); // read the values, passed by refrence 
+    // bot.readGPS(local_GPS_Latitude, local_GPS_Longitude); // read the values, passed by refrence 
     bot.setCurrentGPS(local_GPS_Latitude, local_GPS_Longitude); // store them in global variables
 
     vTaskDelay(500 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
@@ -627,18 +666,18 @@ void IMUTask(void *pvParameters){
   }
 }
 
-void BatterySensorTask(void *pvParameters){
+// void BatterySensorTask(void *pvParameters){
 
-  // These store local readings
-  float local_Battery_Level; 
+//   // These store local readings
+//   float local_Battery_Level; 
 
-  while(1){
-    local_Battery_Level = bot.readBatterySensor_mock();
-    bot.setBatteryLevel(local_Battery_Level); 
+//   while(1){
+//     local_Battery_Level = bot.readBatterySensor_mock();
+//     bot.setBatteryLevel(local_Battery_Level); 
 
-    vTaskDelay(Battery_Sensor_Period / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
-  }
-}
+//     vTaskDelay(Battery_Sensor_Period / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
+//   }
+// }
 
 
 ///////////////
@@ -692,32 +731,12 @@ bool parseInput(String inputString){
     // Extract Command
     String Command = inputString.substring(indexOfFirstComma + 1, indexOfSecondComma); 
 
-
-    if(Command == "MOVAUTO"){
-
-      // Parse GPS Points
-      
-      // parse lat
-      int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
-      String latString = inputString.substring(indexOfSecondComma + 1, indexOfThirdComma); 
-
-      // parse lon
-      int indexOfFourthComma = inputString.indexOf(',',indexOfThirdComma + 1); 
-      String lonString = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma); 
-
-      // Set Target Points
-      bot.setTargetGPS(latString.toInt(), lonString.toInt());
-
-      bot.setAutomaticMode(true);
-    } 
-
     // MOV:
     // Based on a users input. 
     // Read the compass and deviate
     // EX: 1,MOV,L,100
     if(Command == "MOV"){
-
-      const int MOVE_OFFSET = 10; // offset 10 degrees
+      // Probally move to algo function later
 
       float local_compass_heading;
 
@@ -735,37 +754,24 @@ bool parseInput(String inputString){
 
       // TD: Set Speed
       bot.setSpeed(moveSpeed.toInt());
+      bot.setDirection(movDirection);
 
-      // Calcuate Target IMU (based on direction and offset
-        local_compass_heading = bot.getCurrentHeading();
+      // bot.setTargetHeading(MOVE_OFFSET); // Hardcode now with just the offset (change to string inoput later)
 
-        float newTargetHeading = calculateTargetHeading(local_compass_heading, MOVE_OFFSET, movDirection); 
-        bot.setTargetHeading(newTargetHeading);
-
-      // Set movMode to true
-      bot.setMoveMode(true);
+      moveMode = true;
     }
 
 
     // Stoppers for automatic modes
+    // EX: 1,MOVSTOP
     if(Command == "MOVSTOP"){
-      bot.setMoveMode(false);
+      moveMode = false;
     }
-
-    if(Command == "AUTOSTOP"){
-      bot.setAutomaticMode(false);
-    }
-
 
     // If in an automatic mode, do not parse (90,90)'s
-    if(bot.getMoveMode()){
+    if(moveMode){
       return true;
     }
-
-    if(bot.getAutomaticMode()){
-      return true;
-    }
-
 
     // MOVPWM
     if(Command == "MOVPWM"){
