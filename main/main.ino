@@ -185,6 +185,12 @@ public:
   
   float getCurrentHeading() {
     float heading = 0.0f;
+
+    // Add Current Heading
+
+
+    //
+
     if(xSemaphoreTake(_xMutexSensor_Current_IMU, portMAX_DELAY) == pdTRUE) {
       heading = _currentCompassHeading;
       xSemaphoreGive(_xMutexSensor_Current_IMU);
@@ -573,6 +579,7 @@ void AlgoTask(void *pvParameters){
       const int MOVE_OFFSET = 10; // offset 10 degrees
 
 
+      // Variables 
       float currentHeading; 
       float targetHeading; 
       String direction;
@@ -586,48 +593,28 @@ void AlgoTask(void *pvParameters){
       // DEBUG START:
       // Print the current compass and the target compass;
       currentHeading = bot.getCurrentHeading();
-      direction = bot.getDirection();
+      targetHeading = bot.getTargetHeading();
 
-      // targetSpeed = bot.getSpeed();
+      // TD: Add get target heading
 
       Serial.print("Current Heading: ");
       Serial.println(currentHeading);
 
-      Serial.print("Direction: ");
-      Serial.println(direction);
-
-      // Now add / subtract offset
-      if(direction == "L"){
-        targetHeading = currentHeading - MOVE_OFFSET;
-      }
-      else if(direction == "R"){
-        targetHeading = currentHeading + MOVE_OFFSET;
-      }
-      else if(direction == "S"){
-        targetHeading = currentHeading;
-      }
-
       Serial.print("Target Heading: ");
       Serial.println(targetHeading);
 
-      // Serial.print("Target Heading: ");
-      // Serial.println(targetSpeed);
-      // DEBUG END:
 
       // Then ALGO Time
-      // Inputs: currentheading, targetheading, speed
+      // Inputs: currentheading, targetheading
       // Outputs: leftPWM, rightPWM
 
       // Then move the motors:
       // motors.move(leftPWM, rightPWM)
 
-
     } 
     else{
       Serial.println("Not In Any Auto Mode");
     }
-
-    // Compass Deviating Algo
 
     vTaskDelay(1000 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
@@ -737,8 +724,11 @@ bool parseInput(String inputString){
     // EX: 1,MOV,L,100
     if(Command == "MOV"){
       // Probally move to algo function later
+      float currentHeading;
+      float targetHeading; 
+      int MOVE_OFFSET = 10;
 
-      float local_compass_heading;
+      Serial.println("///// INPUT ////")
 
       // parse direction
       int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
@@ -753,10 +743,29 @@ bool parseInput(String inputString){
       Serial.println(moveSpeed);
 
       // TD: Set Speed
-      bot.setSpeed(moveSpeed.toInt());
-      bot.setDirection(movDirection);
+      // bot.setSpeed(moveSpeed.toInt());
+      bot.setSpeed(50); // harded coded for now
 
-      // bot.setTargetHeading(MOVE_OFFSET); // Hardcode now with just the offset (change to string inoput later)
+      // read the current heading
+      currentHeading = bot.getTargetHeading();
+
+      // parse the direction and set the target heading
+      if(movDirection == "S"){
+        targetHeading = currentHeading;
+      }
+      else if(movDirection == "L"){
+        targetHeading = currentHeading - MOVE_OFFSET;
+      }
+      else if(movDirection == "R"){
+        targetHeading = currentHeading + MOVE_OFFSET;
+      }
+
+      bot.setTargetHeading(targetHeading); // Hardcode now with just the offset (change to string inoput later)
+
+      Serial.print("Current Heading: ");
+      Serial.println(currentHeading);
+      Serial.print("Target Heading: ");
+      Serial.println(targetHeading);
 
       moveMode = true;
     }
