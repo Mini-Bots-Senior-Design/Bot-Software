@@ -162,26 +162,6 @@ public:
   //////////////////////////////////////////////////////
   // CURRENT IMU: Setters and Getters for the Compass Heading //
   //////////////////////////////////////////////////////
-  float readIMU_mock() {
-    float heading;
-
-    if(xSemaphoreTake(_xMutexSensor_Current_IMU, portMAX_DELAY) == pdTRUE) {
-      heading = 2.2;
-      xSemaphoreGive(_xMutexSensor_Current_IMU);
-    }
-    return heading;
-  }
-
-  // TD Implement Later
-  float readIMU() {
-    float heading;
-
-    if(xSemaphoreTake(_xMutexSensor_Current_IMU, portMAX_DELAY) == pdTRUE) {
-      heading = 2.2; // change to be real
-      xSemaphoreGive(_xMutexSensor_Current_IMU);
-    }
-    return heading;
-  }
 
   void setCurrentHeading(float heading) {
     if(xSemaphoreTake(_xMutexSensor_Current_IMU, portMAX_DELAY) == pdTRUE) {
@@ -587,6 +567,51 @@ void BotTask(void *pvParameters) {
   }
 }
 
+// ALGO Start // 
+
+// PID constants - tune these as needed
+float Kp = 1.0;
+float Ki = 0.01;
+float Kd = 0.5;
+
+// PID state
+float prevError = 0;
+float integral = 0;
+
+// Function to normalize heading error to [-180, 180]
+float getHeadingError(float target, float current) {
+  float error = target - current;
+  if (error > 180) error -= 360;
+  if (error < -180) error += 360;
+  return error;
+}
+
+// Main PID control function
+void pidMotorControl(float targetHeading, float currentHeading, int &leftPWM, int &rightPWM) {
+  float error = getHeadingError(targetHeading, currentHeading);
+
+  // PID calculations
+  integral += error;
+  float derivative = error - prevError;
+  prevError = error;
+
+  float output = Kp * error + Ki * integral + Kd * derivative;
+
+  // Clamp output to range [-90, 90]
+  output = constrain(output, -90, 90);
+
+  // Base speed (half power) -> NOT JK its just 49
+  int baseSpeed = 45;
+
+  // Motor control: adjust left and right speeds inversely
+  leftPWM  = constrain(baseSpeed + output, 0, 90);
+  rightPWM = constrain(baseSpeed - output, 0, 90);
+
+  // Only going forward:
+  leftPWM = leftPWM + 90;
+  rightPWM = rightPWM + 90;
+}
+
 
 // Automatic Task: Read Sensor Data and Move Bot
 void AlgoTask(void *pvParameters){
@@ -599,6 +624,8 @@ void AlgoTask(void *pvParameters){
     if(moveMode){
 
       const int MOVE_OFFSET = 10; // offset 10 degrees
+
+      Serial.println("// AUTO START //");
 
 
       // Variables 
@@ -630,9 +657,18 @@ void AlgoTask(void *pvParameters){
       // Inputs: currentheading, targetheading
       // Outputs: leftPWM, rightPWM
 
+      pidMotorControl(targetHeading, currentHeading, leftPWM, rightPWM);
+
+      Serial.print("LeftPWM: ");
+      Serial.println(leftPWM);
+      Serial.print("RigthtPWM: ");
+      Serial.println(leftPWM);
+
       // Then move the motors:
       // motors.move(leftPWM, rightPWM)
 
+
+      Serial.println("// AUTO END //");
     } 
     else{
       Serial.println("Not In Any Auto Mode");
@@ -796,7 +832,7 @@ bool parseInput(String inputString){
       float targetHeading; 
       int MOVE_OFFSET = 10;
 
-      Serial.println("///// INPUT ////");
+      Serial.println("///// INPUT MOV COMMAND ////");
 
       // parse direction
       int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
@@ -815,7 +851,7 @@ bool parseInput(String inputString){
       bot.setSpeed(50); // harded coded for now
 
       // read the current heading
-      currentHeading = bot.getTargetHeading();
+      currentHeading = bot.getCurrentHeading();
 
       // parse the direction and set the target heading
       if(movDirection == "S"){
@@ -834,6 +870,8 @@ bool parseInput(String inputString){
       Serial.println(currentHeading);
       Serial.print("Target Heading: ");
       Serial.println(targetHeading);
+
+      Serial.println("///// INPUT MOV COMMAND DONE ////");
 
       moveMode = true;
     }
