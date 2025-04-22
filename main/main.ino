@@ -12,8 +12,15 @@
 #include <TinyGPS++.h>
 #include <HardwareSerial.h>
 
+#include "SparkFun_BNO08x_Arduino_Library.h"
+
 // Define GPS Serial Port (ESP32 has multiple hardware serials)
 // HardwareSerial SerialGPS(1);  // Use Serial1
+
+// IMU
+
+BNO08x imu;
+#define BNO08X_ADDR 0x4B
 
 // GPS Object
 TinyGPSPlus gps;
@@ -479,6 +486,21 @@ void setup() {
   SerialGPS.begin(GPS_BAUD_RATE, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   delay(3000);
 
+  // IMU Setup
+
+  if (imu.begin() == false) {
+    Serial.println("BNO08x not detected at default I2C address. Check your jumpers and the hookup guide. Freezing...");
+    while (1);
+  }
+  Serial.println("BNO08x found!");
+
+  if (imu.enableGeomagneticRotationVector() == true) {
+    Serial.println(F("Geomagnetic Rotation vector enabled"));
+    Serial.println(F("Output in form roll, pitch, yaw"));
+  } else {
+    Serial.println("Could not enable geomagnetic rotation vector");
+  }
+
   // Motor Setup
   motors.setupMotors();
   motors.calibrateMotors();
@@ -640,16 +662,62 @@ void GPSTask(void *pvParameters){
   }
 }
 
-void IMUTask(void *pvParameters){
+float readIMU(){
+  float currentDegrees = 0;
 
-  // These store local readings
-  float local_Compass_Heading; 
+  if (imu.wasReset()) {
+    Serial.print("sensor was reset ");
+    if (imu.enableGeomagneticRotationVector() == true) {
+      Serial.println(F("Geomagnetic Rotation vector enabled"));
+      Serial.println(F("Output in form roll, pitch, yaw"));
+    } else {
+      Serial.println("Could not enable geomagnetic rotation vector");
+    }
+  }
+
+  if (imu.getSensorEvent() == true) {
+    if (imu.getSensorEventID() == SENSOR_REPORTID_GEOMAGNETIC_ROTATION_VECTOR) {
+      float yaw = imu.getYaw() * 180.0 / PI;
+      if (yaw < 0) yaw += 360.0;
+      currentDegrees = yaw;
+    }
+  }
+  Serial.println("READ: " + String(currentDegrees));
+
+  return currentDegrees;
+}
+
+void IMUTask(void *pvParameters){
+  static float prevHeading = 0;
+  static bool firstRun = true;
 
   while(1){
-    local_Compass_Heading = bot.readIMU_mock(); // read the values, passed by refrence
-    bot.setCurrentHeading(local_Compass_Heading); // store them in global variables
+    float rawHeading = readIMU();
+
+    if (firstRun) {
+      prevHeading = rawHeading;
+      firstRun = false;
+      Serial.println("FIRST RUN — Setting initial heading");
+    }
+
+    float diff = fmod((rawHeading - prevHeading + 540.0), 360.0) - 180.0;
+    
+    // Smooth the transition
+    float alpha = 0.2;
+    float filteredHeading = fmod((prevHeading + alpha * diff + 360.0), 360.0);
+    if (filteredHeading < 0) filteredHeading += 360.0;
+
+    prevHeading = filteredHeading;
+
+    // Clips the offset to a max if it is too much too fast
+    float maxStep = 10.0;
+    if (abs(diff) > maxStep) {
+      diff = (diff > 0) ? maxStep : -maxStep;
+    }
+
+    bot.setCurrentHeading(filteredHeading);
   
-    vTaskDelay(IMU_Period / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
+    vTaskDelay(IMU_Period / portTICK_PERIOD_MS);
   }
 }
 
@@ -728,7 +796,7 @@ bool parseInput(String inputString){
       float targetHeading; 
       int MOVE_OFFSET = 10;
 
-      Serial.println("///// INPUT ////")
+      Serial.println("///// INPUT ////");
 
       // parse direction
       int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
