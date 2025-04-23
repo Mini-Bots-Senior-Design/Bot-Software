@@ -21,6 +21,7 @@
 
 BNO08x imu;
 #define BNO08X_ADDR 0x4B
+int imuEnabled = 0; // added NR
 
 // GPS Object
 TinyGPSPlus gps;
@@ -306,45 +307,6 @@ public:
   //   }
   // }
 
-
-  ////////////////////////////////
-  // Parsing and Format Methods //
-  ////////////////////////////////
-  String getAllData(){
-    long currentGPSLatitude;
-    long currentGPSLongitude;
-    long targetGPSLatitude;
-    long targetGPSLongitude;
-
-    float currentHeading;
-    float targetHeading;
-
-    float batteryLevel;
-
-    int speed; // add speed
-
-    // get target gps location
-    getTargetGPS(targetGPSLatitude, targetGPSLongitude);
-    getCurrentGPS(currentGPSLatitude, currentGPSLongitude);
-
-    currentHeading = getCurrentHeading();
-    targetHeading = getTargetHeading();
-
-    batteryLevel = getBatteryLevel();
-
-    speed = getSpeed();
-
-
-    String data = "Target_GPS: " + String(targetGPSLatitude) + "," + String(targetGPSLongitude) +
-               " | Current_GPS: " + String(currentGPSLatitude) + "," + String(currentGPSLongitude) +
-               " | Current_Heading: " + String(currentHeading) +
-               " | Target_Heading: " + String(targetHeading) +
-               " | Target_Speed: " + String(speed) +
-               " | Battery Level: " + String(batteryLevel);
-  
-    return data;
-  } 
-
   String getGPS_String() {
     long currentLon;
     long currentLat;
@@ -430,9 +392,10 @@ class MotorController {
       Serial.println("Calibration Finished");
     }
 
+    // input is [0-180]
     void move(int speed1, int speed2) {
-        motor1.writeMicroseconds(speed1);
-        motor2.writeMicroseconds(speed2);
+      motor1.write(speed1);
+      motor2.write(speed2);
     }
 
     void stopMotors(){
@@ -467,11 +430,13 @@ void setup() {
   delay(3000);
 
   // IMU Setup
+  Wire.begin(); // Added Noah 5:39
 
-  if (imu.begin() == false) {
+  while (imu.begin() == false) {
     Serial.println("BNO08x not detected at default I2C address. Check your jumpers and the hookup guide. Freezing...");
-    while (1);
+    delay(1000);
   }
+
   Serial.println("BNO08x found!");
 
   if (imu.enableGeomagneticRotationVector() == true) {
@@ -573,6 +538,9 @@ void BotTask(void *pvParameters) {
 float Kp = 1.0;
 float Ki = 0.01;
 float Kd = 0.5;
+float maxOutput = 30;
+float maxIntegral = 0.5 * (maxOutput / Ki);  // Prevent integral term from dominating
+
 
 // PID state
 float prevError = 0;
@@ -587,7 +555,8 @@ float getHeadingError(float target, float current) {
 }
 
 // Main PID control function
-void pidMotorControl(float targetHeading, float currentHeading, int &leftPWM, int &rightPWM) {
+// Output [90 , 180]
+void pidMotorControl(float targetHeading, float currentHeading, int &leftPWM, int &rightPWM, int power) {
   float error = getHeadingError(targetHeading, currentHeading);
 
   // PID calculations
@@ -597,19 +566,19 @@ void pidMotorControl(float targetHeading, float currentHeading, int &leftPWM, in
 
   float output = Kp * error + Ki * integral + Kd * derivative;
 
-  // Clamp output to range [-90, 90]
-  output = constrain(output, -90, 90);
+  // Clamp output to range
+  output = constrain(output, -maxOutput, maxOutput);
 
-  // Base speed (half power) -> NOT JK its just 49
-  int baseSpeed = 45;
+  // Base speed
+  int baseSpeed = 17;
 
   // Motor control: adjust left and right speeds inversely
-  leftPWM  = constrain(baseSpeed + output, 0, 90);
-  rightPWM = constrain(baseSpeed - output, 0, 90);
+  rightPWM  = constrain(baseSpeed - output, 0, 90);
+  leftPWM = constrain(baseSpeed + output, 0, 90);
 
-  // Only going forward:
-  leftPWM = leftPWM + 90;
-  rightPWM = rightPWM + 90;
+  // Offset by 90 to match ESC signal range
+  leftPWM += 90;
+  rightPWM += 90;
 }
 
 
@@ -623,7 +592,7 @@ void AlgoTask(void *pvParameters){
     // else if(bot.getMoveMode()){
     if(moveMode){
 
-      const int MOVE_OFFSET = 10; // offset 10 degrees
+      const int MOVE_OFFSET = 25; // offset 10 degrees
 
       Serial.println("// AUTO START //");
 
@@ -632,20 +601,17 @@ void AlgoTask(void *pvParameters){
       float currentHeading; 
       float targetHeading; 
       String direction;
-      float targetSpeed; // relative power
+      float targetPower = 10; // fixed 10* power
 
       // Motor Inputs
       int leftPWM; 
       int rightPWM;
 
-
-      // DEBUG START:
-      // Print the current compass and the target compass;
+      // Get the current compass and the target compass;
       currentHeading = bot.getCurrentHeading();
       targetHeading = bot.getTargetHeading();
 
-      // TD: Add get target heading
-
+      // Serial Monitor
       Serial.print("Current Heading: ");
       Serial.println(currentHeading);
 
@@ -657,31 +623,31 @@ void AlgoTask(void *pvParameters){
       // Inputs: currentheading, targetheading
       // Outputs: leftPWM, rightPWM
 
-      pidMotorControl(targetHeading, currentHeading, leftPWM, rightPWM);
+      pidMotorControl(targetHeading, currentHeading, leftPWM, rightPWM, targetPower);
 
+      // Serial Monitor
       Serial.print("LeftPWM: ");
       Serial.println(leftPWM);
       Serial.print("RigthtPWM: ");
-      Serial.println(leftPWM);
+      Serial.println(rightPWM);
 
       // Then move the motors:
-      // motors.move(leftPWM, rightPWM)
+      motors.move(leftPWM, rightPWM);
 
 
       Serial.println("// AUTO END //");
     } 
     else{
-      Serial.println("Not In Any Auto Mode");
+      // Serial.println("Not In Any Auto Mode");
     }
 
-    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
+    vTaskDelay(50 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
 }
 
 //////////////////
 // Sensor Tasks //
 //////////////////
-
 // This will sample the GPS Sensors and write them to global variables // It will also read the battery value
 void GPSTask(void *pvParameters){
 
@@ -690,17 +656,23 @@ void GPSTask(void *pvParameters){
   long local_GPS_Longitude; 
 
   while(1){
-    bot.readGPS_mock(local_GPS_Latitude, local_GPS_Longitude); // read the values, passed by refrence 
+    // Read GPS Values
+    bot.readGPS_mock(local_GPS_Latitude, local_GPS_Longitude); // Mocked Values are: 111,222s
     // bot.readGPS(local_GPS_Latitude, local_GPS_Longitude); // read the values, passed by refrence 
+
+    // Write GPS Values to Mutexed Variables
     bot.setCurrentGPS(local_GPS_Latitude, local_GPS_Longitude); // store them in global variables
 
     vTaskDelay(500 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
 }
 
+
+// TD: Move this to be a method
 float readIMU(){
   float currentDegrees = 0;
 
+  // TD: maybe delete???.....
   if (imu.wasReset()) {
     Serial.print("sensor was reset ");
     if (imu.enableGeomagneticRotationVector() == true) {
@@ -718,22 +690,30 @@ float readIMU(){
       currentDegrees = yaw;
     }
   }
-  Serial.println("READ: " + String(currentDegrees));
+  // Serial.println("READ: " + String(currentDegrees));
 
   return currentDegrees;
 }
 
+// TD: Move this to be a method
+float readIMU_MOCK(){
+  float currentDegrees = 0;
+  return currentDegrees;
+}
+
+
+// TD: Update readIMU to be bot.readIMU when funciton is methodonized
 void IMUTask(void *pvParameters){
   static float prevHeading = 0;
   static bool firstRun = true;
 
   while(1){
-    float rawHeading = readIMU();
+    float rawHeading = readIMU(); // Mocked up IMU
 
     if (firstRun) {
       prevHeading = rawHeading;
       firstRun = false;
-      Serial.println("FIRST RUN — Setting initial heading");
+      // Serial.println("FIRST RUN — Setting initial heading");
     }
 
     float diff = fmod((rawHeading - prevHeading + 540.0), 360.0) - 180.0;
@@ -827,26 +807,30 @@ bool parseInput(String inputString){
     // Read the compass and deviate
     // EX: 1,MOV,L,100
     if(Command == "MOV"){
-      // Probally move to algo function later
       float currentHeading;
       float targetHeading; 
-      int MOVE_OFFSET = 10;
 
-      Serial.println("///// INPUT MOV COMMAND ////");
+      int MOVE_OFFSET = 25; // 
+
+      // Reset Errors
+      prevError = 0;
+      integral = 0;
+
+      // Serial.println("///// INPUT MOV COMMAND ////");
 
       // parse direction
       int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
       String movDirection = inputString.substring(indexOfSecondComma + 1, indexOfThirdComma); 
-      Serial.print("The Move Direction is: ");
-      Serial.println(movDirection);
+      // Serial.print("The Move Direction is: ");
+      // Serial.println(movDirection);
 
       // parse speed
       int indexOfFourthComma = inputString.indexOf(',',indexOfThirdComma + 1); 
       String moveSpeed = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma); 
-      Serial.print("The Move Speed is: ");
-      Serial.println(moveSpeed);
+      // Serial.print("The Move Speed is: ");
+      // Serial.println(moveSpeed);
 
-      // TD: Set Speed
+      // TD: set actual speeed
       // bot.setSpeed(moveSpeed.toInt());
       bot.setSpeed(50); // harded coded for now
 
@@ -854,24 +838,23 @@ bool parseInput(String inputString){
       currentHeading = bot.getCurrentHeading();
 
       // parse the direction and set the target heading
-      if(movDirection == "S"){
-        targetHeading = currentHeading;
-      }
-      else if(movDirection == "L"){
-        targetHeading = currentHeading - MOVE_OFFSET;
-      }
-      else if(movDirection == "R"){
-        targetHeading = currentHeading + MOVE_OFFSET;
-      }
+      if(movDirection == "S"){targetHeading = currentHeading;}
+      else if(movDirection == "L"){targetHeading = currentHeading - MOVE_OFFSET;}
+      else if(movDirection == "R"){targetHeading = currentHeading + MOVE_OFFSET;}
 
+      // Constrain to 360
+      if (targetHeading < 0){targetHeading += 360;}
+      else if (targetHeading >= 360){targetHeading -= 360;}
+
+      // Set Target Heading
       bot.setTargetHeading(targetHeading); // Hardcode now with just the offset (change to string inoput later)
 
-      Serial.print("Current Heading: ");
-      Serial.println(currentHeading);
-      Serial.print("Target Heading: ");
-      Serial.println(targetHeading);
+      // Serial.print("Current Heading: ");
+      // Serial.println(currentHeading);
+      // Serial.print("Target Heading: ");
+      // Serial.println(targetHeading);
 
-      Serial.println("///// INPUT MOV COMMAND DONE ////");
+      // Serial.println("///// INPUT MOV COMMAND DONE ////");
 
       moveMode = true;
     }
@@ -881,6 +864,11 @@ bool parseInput(String inputString){
     // EX: 1,MOVSTOP
     if(Command == "MOVSTOP"){
       moveMode = false;
+
+      // Stop Motors
+      delay(1000); // added
+      
+      motors.move(90,90);
     }
 
     // If in an automatic mode, do not parse (90,90)'s
@@ -890,7 +878,7 @@ bool parseInput(String inputString){
 
     // MOVPWM
     if(Command == "MOVPWM"){
-      // Serial.println("MOVPWM");
+      Serial.println("// MOVPWM START//");
 
       // parse leftPWM
       int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
@@ -900,7 +888,11 @@ bool parseInput(String inputString){
       int indexOfFourthComma = inputString.indexOf(',',indexOfThirdComma + 1); 
       String rightPWMString = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma); 
 
+      
+      Serial.println("Left: " + rightPWMString + "  Right: " + leftPWMString);      
       motors.move(leftPWMString.toInt(), rightPWMString.toInt());
+
+      Serial.println("// MOVPWM END //");
     }
 
 
