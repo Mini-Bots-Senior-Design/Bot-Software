@@ -46,7 +46,15 @@ TinyGPSPlus gps;
 #define IMU_Period 250
 #define Battery_Sensor_Period 300000
 
-bool moveMode = false;
+
+String autopilotMode = "";
+bool GPSMode = true; // set to false if gps is mocked;
+
+// configurable 
+float baseSpeed = 17.0;
+int moveOffset = 25;  
+int maxOutput = 10;
+
 
 class BotData {
 public:
@@ -163,6 +171,30 @@ public:
   //////////////////////////////////////////////////////
   // CURRENT IMU: Setters and Getters for the Compass Heading //
   //////////////////////////////////////////////////////
+  void readIMU_mock(float &heading_reading){
+    heading_reading = 0;
+  }
+
+  void readIMU(float &heading_reading){
+    if (imu.wasReset()) {
+      Serial.print("sensor was reset ");
+      if (imu.enableGeomagneticRotationVector() == true) {
+        Serial.println(F("Geomagnetic Rotation vector enabled"));
+        Serial.println(F("Output in form roll, pitch, yaw"));
+      } else {
+        Serial.println("Could not enable geomagnetic rotation vector");
+      }
+    }
+
+    if (imu.getSensorEvent() == true) {
+      if (imu.getSensorEventID() == SENSOR_REPORTID_GEOMAGNETIC_ROTATION_VECTOR) {
+        float yaw = imu.getYaw() * 180.0 / PI;
+        if (yaw < 0) yaw += 360.0;
+        heading_reading = yaw;
+      }
+    }
+
+  }
 
   void setCurrentHeading(float heading) {
     if(xSemaphoreTake(_xMutexSensor_Current_IMU, portMAX_DELAY) == pdTRUE) {
@@ -173,11 +205,6 @@ public:
   
   float getCurrentHeading() {
     float heading = 0.0f;
-
-    // Add Current Heading
-
-
-    //
 
     if(xSemaphoreTake(_xMutexSensor_Current_IMU, portMAX_DELAY) == pdTRUE) {
       heading = _currentCompassHeading;
@@ -307,23 +334,18 @@ public:
   //   }
   // }
 
-  String getGPS_String() {
+
+  // TD, Add battery sensor level
+  String createPayload(){
     long currentLon;
     long currentLat;
 
     getCurrentGPS(currentLon, currentLat);
-    String gpsString = String(currentLat) + "," + String(currentLon);
 
-    return gpsString;  // Return the formatted string
-  }  
+    String latLon = String(currentLat) + "," + String(currentLon);
+    String returnString = "0," + String(_botID) + "," + latLon; // Why Zero? ohh zero is SBC
 
-  // TD, Add battery sensor level
-  String createPayload(){
-
-    String latLon = getGPS_String();
-    String createdString = "0," + String(_botID) + "," + latLon; // Why Zero? ohh zero is SBC
-
-    return createdString;
+    return returnString;
   }
 
 private:
@@ -418,6 +440,27 @@ MotorController motors;
 BotData bot;
 
 
+void setupLoRa() {
+  setupBoards();
+
+  int state = radio.begin();
+  if (state != RADIOLIB_ERR_NONE) {
+      Serial.print(F("LoRa init failed, code: "));
+      Serial.println(state);
+      while (true);
+  }
+
+  radio.setFrequency(433.0);
+  radio.setBandwidth(125.0);
+  radio.setSpreadingFactor(8);
+  radio.setCodingRate(6);
+  radio.setSyncWord(0x12);
+  radio.setOutputPower(17);
+
+  radio.setPacketSentAction(setTransmissionFlag);
+  radio.setPacketReceivedAction(setReceiverFlag);
+}
+
 
 // SETUP //
 void setup() {
@@ -428,10 +471,11 @@ void setup() {
   // GPS Setup
   SerialGPS.begin(GPS_BAUD_RATE, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   delay(3000);
+  // GPS Setup Done
+
 
   // IMU Setup
-  Wire.begin(); // Added Noah 5:39
-
+  Wire.begin(); 
   while (imu.begin() == false) {
     Serial.println("BNO08x not detected at default I2C address. Check your jumpers and the hookup guide. Freezing...");
     delay(1000);
@@ -445,10 +489,12 @@ void setup() {
   } else {
     Serial.println("Could not enable geomagnetic rotation vector");
   }
+  // IMU Setup Done
 
   // Motor Setup
   motors.setupMotors();
   motors.calibrateMotors();
+
 
   // Setup Bot
   bot.setBotID(BOT_ID);
@@ -468,6 +514,8 @@ void setup() {
 
   Serial.println("Startup Completed");
 }
+
+
 
 // Reads the Serial Port
 void loop() {
@@ -492,6 +540,8 @@ void loop() {
   }
 }
  
+
+
 
 /////////////////
 // Tasks Start // 
@@ -532,15 +582,18 @@ void BotTask(void *pvParameters) {
   }
 }
 
+
+
+////////////////
 // ALGO Start // 
+////////////////
 
 // PID constants - tune these as needed
 float Kp = 1.0;
-float Ki = 0.01;
+float Ki = 0.005; // was 0.01 before
 float Kd = 0.5;
-float maxOutput = 30;
-float maxIntegral = 0.5 * (maxOutput / Ki);  // Prevent integral term from dominating
-
+float maxIntegral = 50;
+// float maxIntegral = 0.5 * (maxOutput / Ki);  // Prevent integral term from dominating
 
 // PID state
 float prevError = 0;
@@ -554,32 +607,49 @@ float getHeadingError(float target, float current) {
   return error;
 }
 
+// Notes //
+// Base speed = 17 + 90 + = 107
 // Main PID control function
 // Output [90 , 180]
-void pidMotorControl(float targetHeading, float currentHeading, int &leftPWM, int &rightPWM, int power) {
+void pidMotorControl(float targetHeading, float currentHeading, int &leftPWM, int &rightPWM, int targetPower) {
   float error = getHeadingError(targetHeading, currentHeading);
 
   // PID calculations
   integral += error;
+  integral = constrain(integral, -maxIntegral, maxIntegral);  
+
   float derivative = error - prevError;
   prevError = error;
-
   float output = Kp * error + Ki * integral + Kd * derivative;
 
   // Clamp output to range
   output = constrain(output, -maxOutput, maxOutput);
 
   // Base speed
-  int baseSpeed = 17;
+  // TD: Make base speed configurable
+  int scaledSpeed = (int)(baseSpeed * (targetPower / 100.0));  // Scaled
+
 
   // Motor control: adjust left and right speeds inversely
-  rightPWM  = constrain(baseSpeed - output, 0, 90);
-  leftPWM = constrain(baseSpeed + output, 0, 90);
+  rightPWM  = constrain(scaledSpeed - output, 0, 90);
+  leftPWM = constrain(scaledSpeed + output, 0, 90);
 
   // Offset by 90 to match ESC signal range
   leftPWM += 90;
   rightPWM += 90;
+
+  Serial.print("Integral: ");
+  Serial.print(integral);
+  Serial.print(" | ");
+  Serial.print("Error: ");
+  Serial.print(error);
+  Serial.print(" | ");
+  Serial.print("Output: ");
+  Serial.print(output);
+  Serial.print(" | ");
 }
+
+
 
 
 // Automatic Task: Read Sensor Data and Move Bot
@@ -589,19 +659,27 @@ void AlgoTask(void *pvParameters){
     //////////////////////////
     // Direction Algorithim //
     //////////////////////////
-    // else if(bot.getMoveMode()){
-    if(moveMode){
+    
+    // GPS Mode:
+    if(autopilotMode == "GPS"){
+      payload = bot.createPayload();
+      Serial.println("PAYLOAD: " + payload);
+    }
 
-      const int MOVE_OFFSET = 25; // offset 10 degrees
 
-      Serial.println("// AUTO START //");
+    // TD Add GPS Mode and Autopilot Mode
+    else if(autopilotMode == "MOV"){
+      //TD: Set this to be variable
+      const int moveOffset = 25; // offset 10 degrees 
+
+      // Serial.println("// AUTO START //");
 
 
       // Variables 
       float currentHeading; 
       float targetHeading; 
       String direction;
-      float targetPower = 10; // fixed 10* power
+      float targetPower; // fixed 10* power
 
       // Motor Inputs
       int leftPWM; 
@@ -610,13 +688,18 @@ void AlgoTask(void *pvParameters){
       // Get the current compass and the target compass;
       currentHeading = bot.getCurrentHeading();
       targetHeading = bot.getTargetHeading();
+      targetPower = bot.getSpeed();
 
       // Serial Monitor
+      Serial.print("Target Speed: ");
+      Serial.print(targetPower);
+      Serial.print(" | ");
       Serial.print("Current Heading: ");
-      Serial.println(currentHeading);
-
+      Serial.print(currentHeading);
+      Serial.print(" | ");
       Serial.print("Target Heading: ");
-      Serial.println(targetHeading);
+      Serial.print(targetHeading);
+      Serial.print(" | ");
 
 
       // Then ALGO Time
@@ -625,9 +708,9 @@ void AlgoTask(void *pvParameters){
 
       pidMotorControl(targetHeading, currentHeading, leftPWM, rightPWM, targetPower);
 
-      // Serial Monitor
       Serial.print("LeftPWM: ");
-      Serial.println(leftPWM);
+      Serial.print(leftPWM);
+      Serial.print(" | ");
       Serial.print("RigthtPWM: ");
       Serial.println(rightPWM);
 
@@ -638,12 +721,17 @@ void AlgoTask(void *pvParameters){
       Serial.println("// AUTO END //");
     } 
     else{
-      // Serial.println("Not In Any Auto Mode");
+      Serial.println("Not In Any Auto Mode");
     }
 
-    vTaskDelay(50 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
+    vTaskDelay(15/ portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
 }
+
+
+
+
+
 
 //////////////////
 // Sensor Tasks //
@@ -657,48 +745,14 @@ void GPSTask(void *pvParameters){
 
   while(1){
     // Read GPS Values
-    bot.readGPS_mock(local_GPS_Latitude, local_GPS_Longitude); // Mocked Values are: 111,222s
-    // bot.readGPS(local_GPS_Latitude, local_GPS_Longitude); // read the values, passed by refrence 
+    if(GPSMode){bot.readGPS(local_GPS_Latitude, local_GPS_Longitude);}
+    else{bot.readGPS_mock(local_GPS_Latitude, local_GPS_Longitude);}
 
     // Write GPS Values to Mutexed Variables
     bot.setCurrentGPS(local_GPS_Latitude, local_GPS_Longitude); // store them in global variables
 
-    vTaskDelay(500 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
+    vTaskDelay(1000 / portTICK_PERIOD_MS);  // Reduced from 200ms to 100ms
   }
-}
-
-
-// TD: Move this to be a method
-float readIMU(){
-  float currentDegrees = 0;
-
-  // TD: maybe delete???.....
-  if (imu.wasReset()) {
-    Serial.print("sensor was reset ");
-    if (imu.enableGeomagneticRotationVector() == true) {
-      Serial.println(F("Geomagnetic Rotation vector enabled"));
-      Serial.println(F("Output in form roll, pitch, yaw"));
-    } else {
-      Serial.println("Could not enable geomagnetic rotation vector");
-    }
-  }
-
-  if (imu.getSensorEvent() == true) {
-    if (imu.getSensorEventID() == SENSOR_REPORTID_GEOMAGNETIC_ROTATION_VECTOR) {
-      float yaw = imu.getYaw() * 180.0 / PI;
-      if (yaw < 0) yaw += 360.0;
-      currentDegrees = yaw;
-    }
-  }
-  // Serial.println("READ: " + String(currentDegrees));
-
-  return currentDegrees;
-}
-
-// TD: Move this to be a method
-float readIMU_MOCK(){
-  float currentDegrees = 0;
-  return currentDegrees;
 }
 
 
@@ -707,8 +761,10 @@ void IMUTask(void *pvParameters){
   static float prevHeading = 0;
   static bool firstRun = true;
 
+  float rawHeading;
+
   while(1){
-    float rawHeading = readIMU(); // Mocked up IMU
+    bot.readIMU(rawHeading); // Mocked up IMU
 
     if (firstRun) {
       prevHeading = rawHeading;
@@ -750,30 +806,13 @@ void IMUTask(void *pvParameters){
 //   }
 // }
 
-
 ///////////////
 // Tasks End // 
 ///////////////
-void setupLoRa() {
-    setupBoards();
 
-    int state = radio.begin();
-    if (state != RADIOLIB_ERR_NONE) {
-        Serial.print(F("LoRa init failed, code: "));
-        Serial.println(state);
-        while (true);
-    }
 
-    radio.setFrequency(433.0);
-    radio.setBandwidth(125.0);
-    radio.setSpreadingFactor(8);
-    radio.setCodingRate(6);
-    radio.setSyncWord(0x12);
-    radio.setOutputPower(17);
 
-    radio.setPacketSentAction(setTransmissionFlag);
-    radio.setPacketReceivedAction(setReceiverFlag);
-}
+
 
 
 /////////////////////////////////////////
@@ -782,7 +821,7 @@ void setupLoRa() {
 
 // BotID: {1,2,3,4}
 // Command: {MOV, MOVPWM, MOVGPS, STARTUP}
-//  MOV: {F,L,R,S,B}
+//  MOV: {R,L,S}
 //  MOVGPS: {LAT, LAN}
 //  MOVPWM: {PWMLeft, PWMRight}
 
@@ -802,15 +841,14 @@ bool parseInput(String inputString){
     // Extract Command
     String Command = inputString.substring(indexOfFirstComma + 1, indexOfSecondComma); 
 
+
+
     // MOV:
-    // Based on a users input. 
-    // Read the compass and deviate
+    // Based on a users input. Read the compass and deviate
     // EX: 1,MOV,L,100
     if(Command == "MOV"){
       float currentHeading;
       float targetHeading; 
-
-      int MOVE_OFFSET = 25; // 
 
       // Reset Errors
       prevError = 0;
@@ -830,17 +868,15 @@ bool parseInput(String inputString){
       // Serial.print("The Move Speed is: ");
       // Serial.println(moveSpeed);
 
-      // TD: set actual speeed
-      // bot.setSpeed(moveSpeed.toInt());
-      bot.setSpeed(50); // harded coded for now
+      bot.setSpeed(moveSpeed.toInt());
 
       // read the current heading
       currentHeading = bot.getCurrentHeading();
 
       // parse the direction and set the target heading
       if(movDirection == "S"){targetHeading = currentHeading;}
-      else if(movDirection == "L"){targetHeading = currentHeading - MOVE_OFFSET;}
-      else if(movDirection == "R"){targetHeading = currentHeading + MOVE_OFFSET;}
+      else if(movDirection == "L"){targetHeading = currentHeading - moveOffset;}
+      else if(movDirection == "R"){targetHeading = currentHeading + moveOffset;}
 
       // Constrain to 360
       if (targetHeading < 0){targetHeading += 360;}
@@ -849,35 +885,26 @@ bool parseInput(String inputString){
       // Set Target Heading
       bot.setTargetHeading(targetHeading); // Hardcode now with just the offset (change to string inoput later)
 
-      // Serial.print("Current Heading: ");
-      // Serial.println(currentHeading);
-      // Serial.print("Target Heading: ");
-      // Serial.println(targetHeading);
-
       // Serial.println("///// INPUT MOV COMMAND DONE ////");
 
-      moveMode = true;
+      autopilotMode = "MOV";
     }
 
-
-    // Stoppers for automatic modes
     // EX: 1,MOVSTOP
-    if(Command == "MOVSTOP"){
-      moveMode = false;
+    else if(Command == "MOVSTOP"){
+      autopilotMode = "NONE";
 
       // Stop Motors
       delay(1000); // added
-      
       motors.move(90,90);
     }
 
-    // If in an automatic mode, do not parse (90,90)'s
-    if(moveMode){
-      return true;
-    }
+
+
+
 
     // MOVPWM
-    if(Command == "MOVPWM"){
+    else if(Command == "MOVPWM"){
       Serial.println("// MOVPWM START//");
 
       // parse leftPWM
@@ -896,10 +923,110 @@ bool parseInput(String inputString){
     }
 
 
+
+
+
+    // EX: 1,TUNE,1,1,1
+    else if(Command == "TUNE"){
+      Serial.println("// TUNE START//");
+
+      // parse KP
+      int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
+      String KpString = inputString.substring(indexOfSecondComma + 1, indexOfThirdComma); 
+
+      // parse KI
+      int indexOfFourthComma = inputString.indexOf(',',indexOfThirdComma + 1); 
+      String KiString = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma);
+
+      // parse KD
+      int indexOfFifthComma = inputString.indexOf(',',indexOfFourthComma + 1); 
+      String KdString = inputString.substring(indexOfFourthComma + 1, indexOfFifthComma);  
+
+      
+      Serial.println("Old:    Kp: " + String(Kp, 2) + "  Ki: " + String(Ki, 2) + "  Kd: " + String(Kd, 2));  
+      Serial.println("String: Kp: " + KpString + "  Ki: " + KiString + "  Kd: " + KdString);  
+
+      Serial.println("Setting Variable Now...");
+      Kp = KpString.toInt();
+      Ki = KiString.toInt();
+      Kd = KdString.toInt();
+      Serial.println("Setting Variables Finished");
+
+      Serial.println("New:    Kp: " + String(Kp, 2) + "  Ki: " + String(Ki, 2) + "  Kd: " + String(Kd, 2));  
+
+      Serial.println("// TUNE END //");
+    }
+
+
+
+    // EX: 1,TUNE_MOV,17,30,5
+    else if(Command == "TUNE_MOV"){
+      Serial.println("// TUNE_MOV START//");
+
+      // parse base speed
+      int indexOfThirdComma = inputString.indexOf(',',indexOfSecondComma + 1); 
+      String baseSpeedString = inputString.substring(indexOfSecondComma + 1, indexOfThirdComma); 
+
+      // parse offset string
+      int indexOfFourthComma = inputString.indexOf(',',indexOfThirdComma + 1); 
+      String moveOffsetString = inputString.substring(indexOfThirdComma + 1, indexOfFourthComma);
+
+      // parse bounded offset
+      int indexOfFifthComma = inputString.indexOf(',',indexOfFourthComma + 1); 
+      String maxOutputString = inputString.substring(indexOfFourthComma + 1, indexOfFifthComma);  
+
+      
+      Serial.println("Old:    base speed: " + String(baseSpeed,2) + "  offset: " + String(moveOffset) + "  max output: " + String(maxOutput));  
+      Serial.println("String: base speed: " + baseSpeedString + "  offset: " + moveOffsetString + "  max output: " + maxOutputString); 
+
+      Serial.println("Setting Variable Now...");
+      baseSpeed = baseSpeedString.toFloat();
+      moveOffset = moveOffsetString.toInt();
+      maxOutput = maxOutputString.toInt();
+      Serial.println("Setting Variables Finished");
+
+      Serial.println("New:    base speed: " + String(baseSpeed,2) + "  offset: " + String(moveOffset) + "  max output: " + String(maxOutput));  
+
+      Serial.println("// TUNE_MOV END //");
+    }
+
+
+
+    // Start GPS Mode
+    else if(Command == "GPSSTART"){
+      autopilotMode = "GPS";
+    }
+
+    // Stop GPS Mode
+    else if(Command == "GPSSTOP"){
+      autopilotMode = "NONE";
+    }
+
+
+    // SET GPS Mode
+    else if(Command == "GPSMOCK_ON"){
+      Serial.println("GPS set to MOCK");
+      GPSMode = false;
+    }
+
+    else if(Command == "GPSMOCK_OFF"){
+      Serial.println("GPS set to REAL");
+      GPSMode = true;
+    }
+
+    
+
+
+
+
     // STARTUP
-    if(Command == "STARTUP"){
+    else if(Command == "STARTUP"){
       // Serial.println("STARTUP");
       motors.stopMotors();
+    }
+
+    else{
+      Serial.println("ERROR Command Not Found");
     }
     
     return true;
@@ -909,6 +1036,9 @@ bool parseInput(String inputString){
     return false;
   }
 }
+
+
+
 
 ////////////////////
 // LoRa Functions //
@@ -931,11 +1061,6 @@ void switchToReceiveMode() {
     //Serial.println("Switching to Receive Mode");
 }
 
-
-//////////////////////////
-// LoRa Setup Functions //
-//////////////////////////
-
 void handleTransmission(bool transmittedFlag, int transmissionState){
   if (transmittedFlag) {
     Serial.println("Bot transmitted: " + payload);
@@ -943,6 +1068,8 @@ void handleTransmission(bool transmittedFlag, int transmissionState){
     Serial.println("Transmit error, code " + String(transmissionState));
   }
 }
+
+
 
 
 
